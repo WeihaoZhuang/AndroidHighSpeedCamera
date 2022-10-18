@@ -48,6 +48,7 @@ import android.media.ImageReader;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.AsyncTask;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -55,6 +56,7 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
+import android.support.annotation.RequiresApi;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
@@ -72,6 +74,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -200,13 +203,15 @@ public class Camera2RawFragment extends Fragment
      */
     private OrientationEventListener mOrientationListener;
 
+
+    private Handler handler = new Handler(Looper.getMainLooper());
+
     /**
      * {@link TextureView.SurfaceTextureListener} handles several lifecycle events of a
      * {@link TextureView}.
      */
     private final TextureView.SurfaceTextureListener mSurfaceTextureListener
             = new TextureView.SurfaceTextureListener() {
-
         @Override
         public void onSurfaceTextureAvailable(SurfaceTexture texture, int width, int height) {
             configureTransform(width, height);
@@ -299,7 +304,6 @@ public class Camera2RawFragment extends Fragment
      * captures. This is used to allow us to clean up the {@link ImageReader} when all background
      * tasks using its {@link Image}s have completed.
      */
-    private RefCountedAutoCloseable<ImageReader> mJpegImageReader;
 
     /**
      * A reference counted holder wrapping the {@link ImageReader} that handles RAW image captures.
@@ -347,6 +351,13 @@ public class Camera2RawFragment extends Fragment
     private long mCaptureTimer;
 
     //**********************************************************************************************
+
+    private Image mImage;
+    byte[] imageBytes = new byte[3000*4000*2];
+    CaptureRequest.Builder captureBuilder;
+    CaptureRequest mCaptureRequest;
+    //**********************************************************************************************
+
 
     /**
      * {@link CameraDevice.StateCallback} is called when the currently active {@link CameraDevice}
@@ -401,15 +412,7 @@ public class Camera2RawFragment extends Fragment
      * This a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
      * JPEG image is ready to be saved.
      */
-    private final ImageReader.OnImageAvailableListener mOnJpegImageAvailableListener
-            = new ImageReader.OnImageAvailableListener() {
 
-        @Override
-        public void onImageAvailable(ImageReader reader) {
-            dequeueAndSaveImage(mJpegResultQueue, mJpegImageReader);
-        }
-
-    };
 
     /**
      * This a callback object for the {@link ImageReader}. "onImageAvailable" will be called when a
@@ -420,7 +423,13 @@ public class Camera2RawFragment extends Fragment
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-            dequeueAndSaveImage(mRawResultQueue, mRawImageReader);
+//            dequeueAndSaveImage(mRawResultQueue, mRawImageReader);
+            Log.e("Filming", "onImageAva");
+            mImage = mRawImageReader.get().acquireLatestImage();
+            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+            buffer.get(imageBytes);
+            Log.e("Filming", "onImageAva"+String.valueOf(imageBytes[0]));
+            mImage.close();
         }
 
     };
@@ -433,60 +442,7 @@ public class Camera2RawFragment extends Fragment
             = new CameraCaptureSession.CaptureCallback() {
 
         private void process(CaptureResult result) {
-            synchronized (mCameraStateLock) {
-                switch (mState) {
-                    case STATE_PREVIEW: {
-                        // We have nothing to do when the camera preview is running normally.
-                        break;
-                    }
-                    case STATE_WAITING_FOR_3A_CONVERGENCE: {
-                        boolean readyToCapture = true;
-                        if (!mNoAFRun) {
-                            Integer afState = result.get(CaptureResult.CONTROL_AF_STATE);
-                            if (afState == null) {
-                                break;
-                            }
 
-                            // If auto-focus has reached locked state, we are ready to capture
-                            readyToCapture =
-                                    (afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ||
-                                            afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED);
-                        }
-
-                        // If we are running on an non-legacy device, we should also wait until
-                        // auto-exposure and auto-white-balance have converged as well before
-                        // taking a picture.
-                        if (!isLegacyLocked()) {
-                            Integer aeState = result.get(CaptureResult.CONTROL_AE_STATE);
-                            Integer awbState = result.get(CaptureResult.CONTROL_AWB_STATE);
-                            if (aeState == null || awbState == null) {
-                                break;
-                            }
-
-                            readyToCapture = readyToCapture &&
-                                    aeState == CaptureResult.CONTROL_AE_STATE_CONVERGED &&
-                                    awbState == CaptureResult.CONTROL_AWB_STATE_CONVERGED;
-                        }
-
-                        // If we haven't finished the pre-capture sequence but have hit our maximum
-                        // wait timeout, too bad! Begin capture anyway.
-                        if (!readyToCapture && hitTimeoutLocked()) {
-                            Log.w(TAG, "Timed out waiting for pre-capture sequence to complete.");
-                            readyToCapture = true;
-                        }
-
-                        if (readyToCapture && mPendingUserCaptures > 0) {
-                            // Capture once for each user tap of the "Picture" button.
-                            while (mPendingUserCaptures > 0) {
-                                captureStillPictureLocked();
-                                mPendingUserCaptures--;
-                            }
-                            // After this, the camera will go back to the normal state of preview.
-                            mState = STATE_PREVIEW;
-                        }
-                    }
-                }
-            }
         }
 
         @Override
@@ -512,61 +468,22 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureStarted(CameraCaptureSession session, CaptureRequest request,
                                      long timestamp, long frameNumber) {
-            String currentDateTime = generateTimestamp();
-            File rawFile = new File(Environment.
-                    getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-                    "RAW_" + currentDateTime + ".dng");
-            File jpegFile = new File(Environment.
-                    getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-                    "JPEG_" + currentDateTime + ".jpg");
 
             // Look up the ImageSaverBuilder for this request and update it with the file name
             // based on the capture start time.
-            ImageSaver.ImageSaverBuilder jpegBuilder;
-            ImageSaver.ImageSaverBuilder rawBuilder;
-            int requestId = (int) request.getTag();
-            synchronized (mCameraStateLock) {
-                jpegBuilder = mJpegResultQueue.get(requestId);
-                rawBuilder = mRawResultQueue.get(requestId);
             }
-
-            if (jpegBuilder != null) jpegBuilder.setFile(jpegFile);
-            if (rawBuilder != null) rawBuilder.setFile(rawFile);
-        }
 
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
-            int requestId = (int) request.getTag();
-            ImageSaver.ImageSaverBuilder jpegBuilder;
-            ImageSaver.ImageSaverBuilder rawBuilder;
-            StringBuilder sb = new StringBuilder();
-
-            // Look up the ImageSaverBuilder for this request and update it with the CaptureResult
-            synchronized (mCameraStateLock) {
-                jpegBuilder = mJpegResultQueue.get(requestId);
-                rawBuilder = mRawResultQueue.get(requestId);
-
-                if (jpegBuilder != null) {
-                    jpegBuilder.setResult(result);
-                    sb.append("Saving JPEG as: ");
-                    sb.append(jpegBuilder.getSaveLocation());
-                }
-                if (rawBuilder != null) {
-                    rawBuilder.setResult(result);
-                    if (jpegBuilder != null) sb.append(", ");
-                    sb.append("Saving RAW as: ");
-                    sb.append(rawBuilder.getSaveLocation());
-                }
-
-                // If we have all the results necessary, save the image to a file in the background.
-                handleCompletionLocked(requestId, jpegBuilder, mJpegResultQueue);
-                handleCompletionLocked(requestId, rawBuilder, mRawResultQueue);
-
-                finishedCaptureLocked();
-            }
-
-            showToast(sb.toString());
+//            Log.e("Filming", "CaptureCompleted");
+            Log.e("Filming", "CaptureCompleted"+String.valueOf(imageBytes[0]));
+//            showToast("Finished");
+//            try {
+//                mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
+//            } catch (CameraAccessException e) {
+//                e.printStackTrace();
+//            }
         }
 
         @Override
@@ -574,9 +491,6 @@ public class Camera2RawFragment extends Fragment
                                     CaptureFailure failure) {
             int requestId = (int) request.getTag();
             synchronized (mCameraStateLock) {
-                mJpegResultQueue.remove(requestId);
-                mRawResultQueue.remove(requestId);
-                finishedCaptureLocked();
             }
             showToast("Capture failed!");
         }
@@ -624,12 +538,13 @@ public class Camera2RawFragment extends Fragment
                 }
             }
         };
+//        filmThread.start();
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        startBackgroundThread();
+//        startBackgroundThread();
         openCamera();
 
         // When the screen is turned off and turned back on, the SurfaceTexture is already
@@ -674,6 +589,10 @@ public class Camera2RawFragment extends Fragment
     public void onClick(View view) {
         switch (view.getId()) {
             case R.id.picture: {
+                if (mState==STATE_PREVIEW) {
+                    captureStillPictureLocked();
+                    mState = STATE_WAITING_FOR_3A_CONVERGENCE;
+                }
                 takePicture();
                 break;
             }
@@ -718,9 +637,7 @@ public class Camera2RawFragment extends Fragment
                         CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
 
                 // For still image captures, we use the largest available size.
-                Size largestJpeg = Collections.max(
-                        Arrays.asList(map.getOutputSizes(ImageFormat.JPEG)),
-                        new CompareSizesByArea());
+
 
                 Size largestRaw = Collections.max(
                         Arrays.asList(map.getOutputSizes(ImageFormat.RAW_SENSOR)),
@@ -730,18 +647,11 @@ public class Camera2RawFragment extends Fragment
                     // Set up ImageReaders for JPEG and RAW outputs.  Place these in a reference
                     // counted wrapper to ensure they are only closed when all background tasks
                     // using them are finished.
-                    if (mJpegImageReader == null || mJpegImageReader.getAndRetain() == null) {
-                        mJpegImageReader = new RefCountedAutoCloseable<>(
-                                ImageReader.newInstance(largestJpeg.getWidth(),
-                                        largestJpeg.getHeight(), ImageFormat.JPEG, /*maxImages*/5));
-                    }
-                    mJpegImageReader.get().setOnImageAvailableListener(
-                            mOnJpegImageAvailableListener, mBackgroundHandler);
 
                     if (mRawImageReader == null || mRawImageReader.getAndRetain() == null) {
                         mRawImageReader = new RefCountedAutoCloseable<>(
                                 ImageReader.newInstance(largestRaw.getWidth(),
-                                        largestRaw.getHeight(), ImageFormat.RAW_SENSOR, /*maxImages*/ 5));
+                                        largestRaw.getHeight(), ImageFormat.RAW_SENSOR, /*maxImages*/ 1));
                     }
                     mRawImageReader.get().setOnImageAvailableListener(
                             mOnRawImageAvailableListener, mBackgroundHandler);
@@ -778,25 +688,14 @@ public class Camera2RawFragment extends Fragment
         CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
         try {
             // Wait for any previously running session to finish.
-            if (!mCameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
-                throw new RuntimeException("Time out waiting to lock camera opening.");
-            }
-
-            String cameraId;
-            Handler backgroundHandler;
-            synchronized (mCameraStateLock) {
-                cameraId = mCameraId;
-                backgroundHandler = mBackgroundHandler;
-            }
 
             // Attempt to open the camera. mStateCallback will be called on the background handler's
             // thread when this succeeds or fails.
-            manager.openCamera(cameraId, mStateCallback, backgroundHandler);
+            manager.openCamera(mCameraId, mStateCallback, mBackgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
-        } catch (InterruptedException e) {
-            throw new RuntimeException("Interrupted while trying to lock camera opening.", e);
         }
+
     }
 
     /**
@@ -871,10 +770,7 @@ public class Camera2RawFragment extends Fragment
                     mCameraDevice.close();
                     mCameraDevice = null;
                 }
-                if (null != mJpegImageReader) {
-                    mJpegImageReader.close();
-                    mJpegImageReader = null;
-                }
+
                 if (null != mRawImageReader) {
                     mRawImageReader.close();
                     mRawImageReader = null;
@@ -935,7 +831,7 @@ public class Camera2RawFragment extends Fragment
 
             // Here, we create a CameraCaptureSession for camera preview.
             mCameraDevice.createCaptureSession(Arrays.asList(surface,
-                            mJpegImageReader.get().getSurface(),
+
                             mRawImageReader.get().getSurface()), new CameraCaptureSession.StateCallback() {
                         @Override
                         public void onConfigured(CameraCaptureSession cameraCaptureSession) {
@@ -946,7 +842,7 @@ public class Camera2RawFragment extends Fragment
                                 }
 
                                 try {
-                                    setup3AControlsLocked(mPreviewRequestBuilder);
+//                                    setup3AControlsLocked(mPreviewRequestBuilder);
                                     // Finally, we start displaying the camera preview.
                                     cameraCaptureSession.setRepeatingRequest(
                                             mPreviewRequestBuilder.build(),
@@ -1157,44 +1053,23 @@ public class Camera2RawFragment extends Fragment
      * auto-white-balance to converge.
      */
     private void takePicture() {
+        Log.e("Fiming","takePic");
         synchronized (mCameraStateLock) {
-            mPendingUserCaptures++;
-
             // If we already triggered a pre-capture sequence, or are in a state where we cannot
             // do this, return immediately.
             if (mState != STATE_PREVIEW) {
                 return;
             }
 
-            try {
-                // Trigger an auto-focus run if camera is capable. If the camera is already focused,
-                // this should do nothing.
-                if (!mNoAFRun) {
-                    mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AF_TRIGGER,
-                            CameraMetadata.CONTROL_AF_TRIGGER_START);
-                }
-
-                // If this is not a legacy device, we can also trigger an auto-exposure metering
-                // run.
-                if (!isLegacyLocked()) {
-                    // Tell the camera to lock focus.
-                    mPreviewRequestBuilder.set(CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER,
-                            CameraMetadata.CONTROL_AE_PRECAPTURE_TRIGGER_START);
-                }
-
-                // Update state machine to wait for auto-focus, auto-exposure, and
-                // auto-white-balance (aka. "3A") to converge.
-                mState = STATE_WAITING_FOR_3A_CONVERGENCE;
-
-                // Start a timer for the pre-capture sequence.
-                startTimerLocked();
-
-                // Replace the existing repeating request with one with updated 3A triggers.
-                mCaptureSession.capture(mPreviewRequestBuilder.build(), mPreCaptureCallback,
-                        mBackgroundHandler);
-            } catch (CameraAccessException e) {
-                e.printStackTrace();
-            }
+//            try {
+//                // Replace the existing repeating request with one with updated 3A triggers.
+//                mCaptureSession.setRepeatingBurst(Collections.singletonList(mPreviewRequestBuilder.build()), mPreCaptureCallback,
+//                        mBackgroundHandler);
+////                mCaptureSession.capture(mPreviewRequestBuilder.build(), mPreCaptureCallback,
+////                        mBackgroundHandler);
+//            } catch (CameraAccessException e) {
+//                e.printStackTrace();
+//            }
         }
     }
 
@@ -1205,42 +1080,25 @@ public class Camera2RawFragment extends Fragment
      * Call this only with {@link #mCameraStateLock} held.
      */
     private void captureStillPictureLocked() {
+        mState = STATE_WAITING_FOR_3A_CONVERGENCE;
         try {
-            final Activity activity = getActivity();
-            if (null == activity || null == mCameraDevice) {
-                return;
-            }
-            // This is the CaptureRequest.Builder that we use to take a picture.
-            final CaptureRequest.Builder captureBuilder =
-                    mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
 
-            captureBuilder.addTarget(mJpegImageReader.get().getSurface());
+            // This is the CaptureRequest.Builder that we use to take a picture.
+//            final CaptureRequest.Builder captureBuilder =
+
+            captureBuilder= mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureBuilder.addTarget(mRawImageReader.get().getSurface());
 
             // Use the same AE and AF modes as the preview.
-            setup3AControlsLocked(captureBuilder);
+//            setup3AControlsLocked(captureBuilder);
 
-            // Set orientation.
-            int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
-            captureBuilder.set(CaptureRequest.JPEG_ORIENTATION,
-                    sensorToDeviceRotation(mCharacteristics, rotation));
 
             // Set request tag to easily track results in callbacks.
-            captureBuilder.setTag(mRequestCounter.getAndIncrement());
-
-            CaptureRequest request = captureBuilder.build();
-
-            // Create an ImageSaverBuilder in which to collect results, and add it to the queue
-            // of active requests.
-            ImageSaver.ImageSaverBuilder jpegBuilder = new ImageSaver.ImageSaverBuilder(activity)
-                    .setCharacteristics(mCharacteristics);
-            ImageSaver.ImageSaverBuilder rawBuilder = new ImageSaver.ImageSaverBuilder(activity)
-                    .setCharacteristics(mCharacteristics);
-
-            mJpegResultQueue.put((int) request.getTag(), jpegBuilder);
-            mRawResultQueue.put((int) request.getTag(), rawBuilder);
-
-            mCaptureSession.capture(request, mCaptureCallback, mBackgroundHandler);
+//            captureBuilder.setTag(mRequestCounter.getAndIncrement());
+//            mCaptureSession.setRepeatingRequest(captureBuilder.build(), mCaptureCallback, mBackgroundHandler);
+            mCaptureRequest = captureBuilder.build();
+            mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
+//            mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
 
         } catch (CameraAccessException e) {
             e.printStackTrace();
@@ -1271,49 +1129,7 @@ public class Camera2RawFragment extends Fragment
         }
     }
 
-    /**
-     * Retrieve the next {@link Image} from a reference counted {@link ImageReader}, retaining
-     * that {@link ImageReader} until that {@link Image} is no longer in use, and set this
-     * {@link Image} as the result for the next request in the queue of pending requests.  If
-     * all necessary information is available, begin saving the image to a file in a background
-     * thread.
-     *
-     * @param pendingQueue the currently active requests.
-     * @param reader       a reference counted wrapper containing an {@link ImageReader} from which
-     *                     to acquire an image.
-     */
-    private void dequeueAndSaveImage(TreeMap<Integer, ImageSaver.ImageSaverBuilder> pendingQueue,
-                                     RefCountedAutoCloseable<ImageReader> reader) {
-        synchronized (mCameraStateLock) {
-            Map.Entry<Integer, ImageSaver.ImageSaverBuilder> entry =
-                    pendingQueue.firstEntry();
-            ImageSaver.ImageSaverBuilder builder = entry.getValue();
 
-            // Increment reference count to prevent ImageReader from being closed while we
-            // are saving its Images in a background thread (otherwise their resources may
-            // be freed while we are writing to a file).
-            if (reader == null || reader.getAndRetain() == null) {
-                Log.e(TAG, "Paused the activity before we could save the image," +
-                        " ImageReader already closed.");
-                pendingQueue.remove(entry.getKey());
-                return;
-            }
-
-            Image image;
-            try {
-                image = reader.get().acquireNextImage();
-            } catch (IllegalStateException e) {
-                Log.e(TAG, "Too many images queued for saving, dropping image for request: " +
-                        entry.getKey());
-                pendingQueue.remove(entry.getKey());
-                return;
-            }
-
-            builder.setRefCountedReader(reader).setImage(image);
-
-            handleCompletionLocked(entry.getKey(), builder, pendingQueue);
-        }
-    }
 
     /**
      * Runnable that saves an {@link Image} into the specified {@link File}, and updates
@@ -1370,35 +1186,9 @@ public class Camera2RawFragment extends Fragment
             int format = mImage.getFormat();
             switch (format) {
                 case ImageFormat.JPEG: {
-                    ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-                    byte[] bytes = new byte[buffer.remaining()];
-                    buffer.get(bytes);
-                    FileOutputStream output = null;
-                    try {
-                        output = new FileOutputStream(mFile);
-                        output.write(bytes);
-                        success = true;
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    } finally {
-                        mImage.close();
-                        closeOutput(output);
-                    }
                     break;
                 }
                 case ImageFormat.RAW_SENSOR: {
-                    DngCreator dngCreator = new DngCreator(mCharacteristics, mCaptureResult);
-                    FileOutputStream output = null;
-                    try {
-                        output = new FileOutputStream(mFile);
-                        dngCreator.writeImage(output, mImage);
-                        success = true;
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    } finally {
-                        mImage.close();
-                        closeOutput(output);
-                    }
                     break;
                 }
                 default: {
