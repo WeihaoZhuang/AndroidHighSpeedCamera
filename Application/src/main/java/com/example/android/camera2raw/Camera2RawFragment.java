@@ -365,7 +365,10 @@ public class Camera2RawFragment extends Fragment
     private Image mImage;
     byte[] imageBytes = new byte[3000*4000*2];
     byte[] randomByteArray = new byte[1024*1024*4];
-    Bitmap randomBitmap = Bitmap.createBitmap(1024,1024,Bitmap.Config.ARGB_8888);
+    byte[] outputArray = new byte[3000*4000]; //1500,2000,4
+    byte[] outputArray2 = new byte[1500*2000*4]; //1500,2000,4
+
+    Bitmap randomBitmap = Bitmap.createBitmap(2000,1500,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
     ImageView mImageView;
@@ -483,9 +486,33 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
+            for (int i=0; i<imageBytes.length/2;i++){
+                char b1 = (char) imageBytes[i*2+1];
+                char b2 = (char) imageBytes[i*2];
+                float out = ((b1 & 0xFF <<8) | (b2 & 0xFF));
+                byte out2 = (byte) out;
+                outputArray[i]=out2;
+            }
 
-            new Random().nextBytes(randomByteArray);
-            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(randomByteArray));
+//            for (int i =0; i<1500;i++){
+//                for (int j =0; j<2000; j=j+3) {
+//                    byte r = (byte) (255 * outputArray[i + 0]);
+//                    byte g1 = (byte) (255 * outputArray[i + 1]);
+//                    byte g2 = (byte) (255 * outputArray[i + 1500 + 0]);
+//                    byte b = (byte) (255 * outputArray[i + 1500 + 1]);
+//                    byte alpha = -1;
+//                    outputArray2[i] = r;
+//                    outputArray2[i + 1] = g1;
+//                    outputArray2[i + 2] = b;
+//                    outputArray2[i + 3] = r;
+//                }
+//            }
+
+//            new Random().nextBytes(randomByteArray);
+//            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(randomByteArray));
+            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray));
+
+
             mImageView.setImageBitmap(randomBitmap);
 
         }
