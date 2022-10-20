@@ -25,6 +25,9 @@ import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
+import android.content.res.AssetManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Point;
@@ -68,14 +71,20 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ImageView;
 import android.widget.Toast;
 
+import junit.framework.Assert;
+
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Array;
 import java.nio.ByteBuffer;
+import java.sql.Struct;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -85,6 +94,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
@@ -354,8 +364,11 @@ public class Camera2RawFragment extends Fragment
 
     private Image mImage;
     byte[] imageBytes = new byte[3000*4000*2];
+    byte[] randomByteArray = new byte[1024*1024*4];
+    Bitmap randomBitmap = Bitmap.createBitmap(1024,1024,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
+    ImageView mImageView;
     //**********************************************************************************************
 
 
@@ -374,10 +387,6 @@ public class Camera2RawFragment extends Fragment
                 mCameraOpenCloseLock.release();
                 mCameraDevice = cameraDevice;
 
-                // Start the preview session if the TextureView has been set up already.
-                if (mPreviewSize != null && mTextureView.isAvailable()) {
-                    createCameraPreviewSessionLocked();
-                }
             }
         }
 
@@ -423,12 +432,10 @@ public class Camera2RawFragment extends Fragment
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-//            dequeueAndSaveImage(mRawResultQueue, mRawImageReader);
             Log.e("Filming", "onImageAva");
             mImage = mRawImageReader.get().acquireLatestImage();
             ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
             buffer.get(imageBytes);
-            Log.e("Filming", "onImageAva"+String.valueOf(imageBytes[0]));
             mImage.close();
         }
 
@@ -476,14 +483,11 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
-//            Log.e("Filming", "CaptureCompleted");
-            Log.e("Filming", "CaptureCompleted"+String.valueOf(imageBytes[0]));
-//            showToast("Finished");
-//            try {
-//                mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-//            } catch (CameraAccessException e) {
-//                e.printStackTrace();
-//            }
+
+            new Random().nextBytes(randomByteArray);
+            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(randomByteArray));
+            mImageView.setImageBitmap(randomBitmap);
+
         }
 
         @Override
@@ -525,6 +529,7 @@ public class Camera2RawFragment extends Fragment
         view.findViewById(R.id.picture).setOnClickListener(this);
         view.findViewById(R.id.info).setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
+        mImageView = (ImageView) view.findViewById(R.id.imageView);
 
         // Setup a new OrientationEventListener.  This is used to handle rotation events like a
         // 180 degree rotation that do not normally trigger a call to onCreate to do view re-layout
@@ -589,10 +594,7 @@ public class Camera2RawFragment extends Fragment
     public void onClick(View view) {
         switch (view.getId()) {
             case R.id.picture: {
-                if (mState==STATE_PREVIEW) {
-                    captureStillPictureLocked();
-                    mState = STATE_WAITING_FOR_3A_CONVERGENCE;
-                }
+                captureStillPictureLocked();
                 takePicture();
                 break;
             }
@@ -825,9 +827,9 @@ public class Camera2RawFragment extends Fragment
             Surface surface = new Surface(texture);
 
             // We set up a CaptureRequest.Builder with the output Surface.
-            mPreviewRequestBuilder
-                    = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            mPreviewRequestBuilder.addTarget(surface);
+//            mPreviewRequestBuilder
+//                    = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+//            mPreviewRequestBuilder.addTarget(surface);
 
             // Here, we create a CameraCaptureSession for camera preview.
             mCameraDevice.createCaptureSession(Arrays.asList(surface,
@@ -837,22 +839,6 @@ public class Camera2RawFragment extends Fragment
                         public void onConfigured(CameraCaptureSession cameraCaptureSession) {
                             synchronized (mCameraStateLock) {
                                 // The camera is already closed
-                                if (null == mCameraDevice) {
-                                    return;
-                                }
-
-                                try {
-//                                    setup3AControlsLocked(mPreviewRequestBuilder);
-                                    // Finally, we start displaying the camera preview.
-                                    cameraCaptureSession.setRepeatingRequest(
-                                            mPreviewRequestBuilder.build(),
-                                            mPreCaptureCallback, mBackgroundHandler);
-                                    mState = STATE_PREVIEW;
-                                } catch (CameraAccessException | IllegalStateException e) {
-                                    e.printStackTrace();
-                                    return;
-                                }
-                                // When the session is ready, we start displaying the preview.
                                 mCaptureSession = cameraCaptureSession;
                             }
                         }
