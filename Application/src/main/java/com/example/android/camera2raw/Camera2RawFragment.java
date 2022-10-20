@@ -367,7 +367,8 @@ public class Camera2RawFragment extends Fragment
     byte[] randomByteArray = new byte[1024*1024*4];
     byte[] outputArray = new byte[3000*4000]; //1500,2000,4
     byte[] outputArray2 = new byte[1500*2000*4]; //1500,2000,4
-
+    byte[][] tmpByteArray = new byte[3000][4000];
+    byte[][][] tmpByteArray2 = new byte[1500][2000][4];
     Bitmap randomBitmap = Bitmap.createBitmap(2000,1500,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
@@ -494,23 +495,35 @@ public class Camera2RawFragment extends Fragment
                 outputArray[i]=out2;
             }
 
-//            for (int i =0; i<1500;i++){
-//                for (int j =0; j<2000; j=j+3) {
-//                    byte r = (byte) (255 * outputArray[i + 0]);
-//                    byte g1 = (byte) (255 * outputArray[i + 1]);
-//                    byte g2 = (byte) (255 * outputArray[i + 1500 + 0]);
-//                    byte b = (byte) (255 * outputArray[i + 1500 + 1]);
-//                    byte alpha = -1;
-//                    outputArray2[i] = r;
-//                    outputArray2[i + 1] = g1;
-//                    outputArray2[i + 2] = b;
-//                    outputArray2[i + 3] = r;
-//                }
-//            }
+//
+            for (int i=0; i< 3000; i++)
+                for (int j=0; j<4000; j++){
+                    tmpByteArray[i][j] = outputArray[i*4000+j];
+                }
+//
+//
+            for (int i =0; i<1500;i++){
+                for (int j =0; j<2000; j++) {
+                    byte r = (byte) (tmpByteArray[2*i][2*j]);
+                    byte g1 = (byte) (tmpByteArray[2*i+1][2*j]);
+                    byte b= (byte) (tmpByteArray[2*i+1][2*j+1]);
+                    byte g2 = (byte) (tmpByteArray[2*i+1][2*j+1]);
 
-//            new Random().nextBytes(randomByteArray);
-//            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(randomByteArray));
-            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray));
+                    tmpByteArray2[i][j][0] = r;
+                    tmpByteArray2[i][j][1] = g1;
+                    tmpByteArray2[i][j][2] = b;
+                    tmpByteArray2[i][j][3] = (byte) 1;
+                }
+            }
+            for (int i =0; i<1500;i++){
+                for (int j =0; j<2000; j++)
+                    for (int k=0;k<4;k++){
+                    {
+                        outputArray2[(i*2000*4) + (j*4) + k] = tmpByteArray2[i][j][k];
+                    }
+                }
+            }
+            randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
 
 
             mImageView.setImageBitmap(randomBitmap);
