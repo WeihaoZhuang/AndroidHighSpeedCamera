@@ -14,23 +14,26 @@
  limitations under the License.
 -->
 <RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
     <com.example.android.camera2raw.AutoFitTextureView
         android:id="@+id/texture"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="match_parent"
+        android:layout_height="444dp"
         android:layout_alignParentStart="true"
         android:layout_alignParentTop="true" />
 
-    <FrameLayout
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true"
-        android:layout_alignParentStart="true"
         android:layout_below="@id/texture"
-        android:background="#4285f4">
+        android:layout_alignParentStart="true"
+        android:layout_alignParentBottom="true"
+        android:background="#4285f4"
+        android:orientation="vertical">
 
         <Button
             android:id="@+id/picture"
@@ -39,16 +42,37 @@
             android:layout_gravity="center"
             android:text="@string/picture" />
 
-        <ImageButton
-            android:id="@+id/info"
-            android:contentDescription="@string/description_info"
-            style="@android:style/Widget.Material.Light.Button.Borderless"
+        <SeekBar
+            android:id="@+id/seekBarShutterSpeed"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:max="20"
+            android:progress="1" />
+
+        <TextView
+            android:id="@+id/textViewShutterSpeed"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical|end"
-            android:padding="20dp"
-            android:src="@drawable/ic_action_info" />
+            android:text="Shutter Speed (s)" />
 
-    </FrameLayout>
+        <SeekBar
+            android:id="@+id/seekBarISO"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/textViewISO"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ISO" />
+
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/imageView"
+        android:layout_width="match_parent"
+        android:layout_height="461dp"
+        android:rotation="90"
+        tools:srcCompat="@tools:sample/avatars" />
 
 </RelativeLayout>
