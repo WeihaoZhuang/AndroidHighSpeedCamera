@@ -16,6 +16,8 @@
 
 package com.example.android.camera2raw;
 
+import static org.tensorflow.lite.support.common.FileUtil.*;
+
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -25,6 +27,8 @@ import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
+import android.content.res.AssetFileDescriptor;
+import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
@@ -55,10 +59,12 @@ import android.os.Message;
 import android.os.SystemClock;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
+import android.text.method.KeyListener;
 import android.util.Log;
 import android.util.Range;
 import android.util.Size;
 import android.util.SparseIntArray;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.OrientationEventListener;
 import android.view.Surface;
@@ -70,21 +76,37 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import junit.framework.Assert;
+
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.tensorflow.lite.DataType;
+import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.Tensor;
+import org.tensorflow.lite.support.common.FileUtil;
+import org.tensorflow.lite.support.image.TensorImage;
+import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
+import org.tensorflow.lite.task.core.BaseOptions;
 
 public class Camera2RawFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -302,6 +324,8 @@ public class Camera2RawFragment extends Fragment
     byte[] imageBytes = new byte[3000*4000*2];
     float[] outputArray = new float[3000*4000]; //1500,2000,4
     byte[] outputArray2 = new byte[750*1000*4]; //1500,2000,4
+    float[] inputTensor = new float[1*3*750*1000];
+    float[] outputTensor = new float[1*3*750*1000];
     Bitmap randomBitmap = Bitmap.createBitmap(1000,750,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
@@ -313,6 +337,13 @@ public class Camera2RawFragment extends Fragment
     TextView mTextViewISO;
     long maxShutterSpeed;
 
+    //TFlite
+    TensorImage input = new TensorImage(DataType.FLOAT32);
+//    TensorImage output = new TensorImage(DataType.FLOAT32);
+    TensorBuffer probabilityBuffer =
+            TensorBuffer.createFixedSize(new int[]{1, 750,1000,3}, DataType.FLOAT32);
+    Interpreter tflite;// = new Interpreter(tfliteModel);
+    int[] inpShape = {1,750,1000,3};
     //**********************************************************************************************
 
 
@@ -480,27 +511,42 @@ public class Camera2RawFragment extends Fragment
             out = (out-64)/(1023-64)*255;
             outputArray[i]=((out));
         }
-
         for (int i=0; i< 3000; i=i+4){
             for (int j=0; j<4000; j=j+4) {
                 float g1 = (float) (outputArray[i * 4000 + j]);
-                byte b = (byte) (outputArray[(i+1) * 4000 + j]);
-                byte r = (byte) (outputArray[i * 4000 + j+1]);
+                float r = (float) (outputArray[(i+1) * 4000 + j]);
+                float b = (float) (outputArray[i * 4000 + j+1]);
                 float g2 = (float) (outputArray[(i+1) * 4000 + j+1]);
-                byte g = (byte) ((g1+g2)/2);
-                outputArray2[(i/4)*1000*4+(j/4)*4+0] = r;
-                outputArray2[(i/4)*1000*4+(j/4)*4+1] = g;
-                outputArray2[(i/4)*1000*4+(j/4)*4+2] = b;
-                outputArray2[(i/4)*1000*4+(j/4)*4+3] = -1;
+                float g = (float) ((g1+g2)/2);
+//                inputTensor[(i/4)*3000+(3*j/4)+0] = r;
+//                inputTensor[(i/4)*3000+(3*j/4)+1] = g;
+//                inputTensor[(i/4)*3000+(3*j/4)+2] = b;
+//                inputTensor[(i/4)*1000*4+(j/4)*4+3] = g;
+                inputTensor[((0*750*1000)+(i/4)*1000+(j/4))] = r;
+                inputTensor[((1*750*1000)+(i/4)*1000+(j/4))] = g;
+                inputTensor[((2*750*1000)+(i/4)*1000+(j/4))] = b;
 
             }
         }
+//        for (int i=0; i< 3000; i=i+4){
+//            for (int j=0; j<4000; j=j+4) {
+//                float g1 = (float) (outputArray[i * 4000 + j]);
+//                byte b = (byte) (outputArray[(i+1) * 4000 + j]);
+//                byte r = (byte) (outputArray[i * 4000 + j+1]);
+//                float g2 = (float) (outputArray[(i+1) * 4000 + j+1]);
+//                byte g = (byte) ((g1+g2)/2);
+//                outputArray2[(i/4)*1000*4+(j/4)*4+0] = r;
+//                outputArray2[(i/4)*1000*4+(j/4)*4+1] = g;
+//                outputArray2[(i/4)*1000*4+(j/4)*4+2] = b;
+//                outputArray2[(i/4)*1000*4+(j/4)*4+3] = -1;
+//
+//            }
+//        }
 
-        randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
-        mImageView.setImageBitmap(randomBitmap);
+//        randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
+//        mImageView.setImageBitmap(randomBitmap);
 
     }
-
     private final CameraCaptureSession.CaptureCallback mCaptureCallback
             = new CameraCaptureSession.CaptureCallback() {
         @Override
@@ -515,8 +561,63 @@ public class Camera2RawFragment extends Fragment
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
 
-            rawToVisualBitmap();
+//            float[][][][] input = new float[1][4][750][1500];
+//            for(int c=0; c<4;c++){
+//                for(int h=0;h<750;h++){
+//                    for(int w=0;w<1500;w++){
+//                        input[0][c][h][w]= 1;//outputArray2[c*750*1500+h*1500+w];
+//                    }
+//                }
+//            }
 
+
+            rawToVisualBitmap();
+            input.load(inputTensor, inpShape);
+//            try {
+//                int[] inpShape = {1,750,1000,3};
+//                TensorImage input = new TensorImage(DataType.FLOAT32);
+//                input.load(inputTensor, inpShape);
+//
+//                TensorImage output = new TensorImage(DataType.FLOAT32);
+//                output.load(outputTensor, inpShape);
+//
+//                TensorBuffer probabilityBuffer =
+//                        TensorBuffer.createFixedSize(new int[]{1, 750,1000,3}, DataType.FLOAT32);
+//
+//                MappedByteBuffer tfliteModel;
+//                tfliteModel = loadModelFile();
+//                Interpreter tflite = new Interpreter(tfliteModel);
+//                Log.e("error", "load pmrid model");
+//
+//                Log.e("error", "init input output");
+
+                tflite.run(input.getBuffer(), probabilityBuffer.getBuffer());
+                Log.e("error", "finished run");
+
+                outputTensor = probabilityBuffer.getFloatArray();
+                for (int i=0; i< 750; i++){
+                    for (int j=0; j<1000; j++) {
+//                        byte r = (byte) (outputTensor[i * 3000 + (3*j)]);
+//                        byte g = (byte) (outputTensor[i * 3000 + (3*j)+1]);
+//                        byte b = (byte) (outputTensor[i * 3000 + (3*j)+2]);
+                        byte r = (byte) (outputTensor[(0*750*1000)+i*1000 + j]);
+                        byte g = (byte) (outputTensor[(1*750*1000)+i*1000 + j]);
+                        byte b = (byte) (outputTensor[(2*750*1000)+i*1000 + j]);
+                        outputArray2[i*4000+(4*j)+0] = r;
+                        outputArray2[i*4000+(4*j)+1] = g;
+                        outputArray2[i*4000+(4*j)+2] = b;
+                        outputArray2[i*4000+(4*j)+3] = -1;
+
+                    }
+                }
+//                randomBitmap = output.getBitmap();
+                randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
+                mImageView.setImageBitmap(randomBitmap);
+//                Log.e("error", "outshape"+(outTensor.shape()[2])+(outTensor.shape()[3]));
+//            Log.e("error", String.valueOf(tflite.getOutputIndex((String)"output")));
+//            } catch (IOException e) {
+//                e.printStackTrace();
+//            }
 
         }
 
@@ -551,12 +652,60 @@ public class Camera2RawFragment extends Fragment
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container,
                              Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fragment_camera2_basic, container, false);
-    }
 
+
+        final View v = inflater.inflate(R.layout.fragment_camera2_basic, container, false);
+        v.setOnKeyListener(new View.OnKeyListener() {
+            @Override
+            public boolean onKey(View v, int keyCode, KeyEvent event) {
+                // KeyEvent.ACTION_DOWN以外のイベントを無視する
+                // （これがないとKeyEvent.ACTION_UPもフックしてしまう）
+                if(event.getAction() != KeyEvent.ACTION_DOWN) {
+                    return false;
+                }
+
+                switch(keyCode) {
+                    case KeyEvent.KEYCODE_VOLUME_UP:
+                        // TODO:音量増加キーが押された時のイベント
+                        Log.e("error", "press");
+                        return true;
+                    case KeyEvent.KEYCODE_VOLUME_DOWN:
+                        // TODO:音量減少キーが押された時のイベント
+                        return true;
+                    default:
+                        return false;
+                }
+            }
+        });
+
+        // View#setFocusableInTouchModeでtrueをセットしておくこと
+        v.setFocusableInTouchMode(true);
+        return v;
+    }
+    private MappedByteBuffer loadModelFile() throws IOException {
+        AssetFileDescriptor fileDescriptor= getResources().getAssets().openFd("pmrid.tflite");
+        FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
+        FileChannel fileChannel=inputStream.getChannel();
+        long startOffset=fileDescriptor.getStartOffset();
+        long declareLength=fileDescriptor.getDeclaredLength();
+        return fileChannel.map(FileChannel.MapMode.READ_ONLY,startOffset,declareLength);
+    }
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
-        Log.e("error", "onViewCreated");
+        Log.e("error", "onViewCreated2");
+
+        try {
+            int numThreads = 4;
+            Interpreter.Options tfLiteOptions = new Interpreter.Options();
+            tfLiteOptions.setNumThreads(numThreads);
+            MappedByteBuffer tfliteModel;
+            tfliteModel = loadModelFile();
+            tflite = new Interpreter(tfliteModel, tfLiteOptions);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+
+
         view.findViewById(R.id.picture).setOnClickListener(this);
 //        view.findViewById(R.id.info).setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);

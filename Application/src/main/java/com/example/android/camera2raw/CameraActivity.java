@@ -18,6 +18,8 @@ package com.example.android.camera2raw;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.util.Log;
+import android.view.KeyEvent;
 
 /**
  * Activity displaying a fragment that implements RAW photo captures.
