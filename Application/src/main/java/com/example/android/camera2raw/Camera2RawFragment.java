@@ -326,6 +326,10 @@ public class Camera2RawFragment extends Fragment
     byte[] outputArray2 = new byte[750*1000*4]; //1500,2000,4
     float[] inputTensor = new float[1*3*750*1000];
     float[] outputTensor = new float[1*3*750*1000];
+
+    int pend=0;
+    List<ByteBuffer> listBuffer = new ArrayList<>();
+
     Bitmap randomBitmap = Bitmap.createBitmap(1000,750,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
@@ -406,10 +410,13 @@ public class Camera2RawFragment extends Fragment
 
         @Override
         public void onImageAvailable(ImageReader reader) {
+            pend = pend+1;
             Log.e("Filming", "onImageAva");
             mImage = mRawImageReader.get().acquireLatestImage();
             ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+
             buffer.get(imageBytes);
+//            listBuffer.add(buffer);
             mImage.close();
         }
 
@@ -560,7 +567,7 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
-
+            Log.e("error", "exp:"+result.get(CaptureResult.SENSOR_SENSITIVITY));
 //            float[][][][] input = new float[1][4][750][1500];
 //            for(int c=0; c<4;c++){
 //                for(int h=0;h<750;h++){
@@ -569,8 +576,46 @@ public class Camera2RawFragment extends Fragment
 //                    }
 //                }
 //            }
-
-
+//            if(pend==30) {
+//                pend = 0;
+//                byte[] x = new byte[3000*4000*2];
+//                Log.e("error", "aa");
+//                for (final ByteBuffer bb : listBuffer) {
+////                    try {
+////                        Thread.sleep(2000);
+////                    } catch (InterruptedException e) {
+////                        e.printStackTrace();
+////                    }
+//                    bb.get(x);
+//                    Log.e("error", "pp");
+//                    for (int i = 0; i < x.length / 2; i++) {
+//                        float out = (float) ((x[i * 2] & 0xFF) | ((x[i * 2 + 1] & 0xFF) << 8));
+//                        out = (out - 64) / (1023 - 64) * 255;
+//                        outputArray[i] = ((out));
+//                    }
+//
+//                    for (int i = 0; i < 3000; i = i + 4) {
+//                        for (int j = 0; j < 4000; j = j + 4) {
+//                            float g1 = (float) (outputArray[i * 4000 + j]);
+//                            byte b = (byte) (outputArray[(i + 1) * 4000 + j]);
+//                            byte r = (byte) (outputArray[i * 4000 + j + 1]);
+//                            float g2 = (float) (outputArray[(i + 1) * 4000 + j + 1]);
+//                            byte g = (byte) ((g1 + g2) / 2);
+//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 0] = r;
+//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 1] = g;
+//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 2] = b;
+//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 3] = -1;
+//
+//                        }
+//                    }
+//                    Log.e("error", "pix:"+outputArray2[0]);
+//                    randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
+//                    mImageView.setImageBitmap(randomBitmap);
+//                    //what ever you do here will be done after 3 seconds delay.
+//
+//
+//                }
+//            }
             rawToVisualBitmap();
             input.load(inputTensor, inpShape);
 //            try {
@@ -693,6 +738,12 @@ public class Camera2RawFragment extends Fragment
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         Log.e("error", "onViewCreated2");
+        List<byte[]> array = new ArrayList<>();
+        for(int i=0;i<5;i++){
+            array.add(new byte[3000*4000*2]);
+
+        }
+
 
         try {
             int numThreads = 4;
@@ -1155,7 +1206,13 @@ public class Camera2RawFragment extends Fragment
 //            captureBuilder.setTag(mRequestCounter.getAndIncrement());
 //            mCaptureSession.setRepeatingRequest(captureBuilder.build(), mCaptureCallback, mBackgroundHandler);
             mCaptureRequest = captureBuilder.build();
-            mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
+
+
+            List<CaptureRequest> listCaptureRequest = new ArrayList<>();
+            for(int i =0; i<30; i++){
+                listCaptureRequest.add(mCaptureRequest);
+            }
+            mCaptureSession.captureBurst(listCaptureRequest, mCaptureCallback, mBackgroundHandler);
 //            mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
 
             setSeekBarShutterSpeed();
