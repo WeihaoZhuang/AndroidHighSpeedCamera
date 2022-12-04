@@ -44,6 +44,7 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.DngCreator;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
@@ -52,6 +53,7 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -80,6 +82,7 @@ import junit.framework.Assert;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -103,11 +106,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
 import org.tensorflow.lite.Tensor;
+import org.tensorflow.lite.gpu.GpuDelegate;
 import org.tensorflow.lite.support.common.FileUtil;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 import org.tensorflow.lite.task.core.BaseOptions;
-
+import org.tensorflow.lite.gpu.CompatibilityList;
+import org.tensorflow.lite.gpu.GpuDelegate;
 public class Camera2RawFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
@@ -319,18 +324,22 @@ public class Camera2RawFragment extends Fragment
     private long mCaptureTimer;
 
     //**********************************************************************************************
-
+    int Height = 1024;
+    int Width = 1024;
+    int Channel = 3;
     private Image mImage;
     byte[] imageBytes = new byte[3000*4000*2];
     float[] outputArray = new float[3000*4000]; //1500,2000,4
-    byte[] outputArray2 = new byte[750*1000*4]; //1500,2000,4
-    float[] inputTensor = new float[1*3*750*1000];
-    float[] outputTensor = new float[1*3*750*1000];
+    byte[] outputArray2 = new byte[Height*Width*4]; //1500,2000,4
+
+
+    float[] inputTensor = new float[1*Channel*Height*Width];
+    float[] outputTensor = new float[1*Channel*Height*Width];
 
     int pend=0;
     List<ByteBuffer> listBuffer = new ArrayList<>();
 
-    Bitmap randomBitmap = Bitmap.createBitmap(1000,750,Bitmap.Config.ARGB_8888);
+    Bitmap randomBitmap = Bitmap.createBitmap(Width,Height,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
     ImageView mImageView;
@@ -345,9 +354,9 @@ public class Camera2RawFragment extends Fragment
     TensorImage input = new TensorImage(DataType.FLOAT32);
 //    TensorImage output = new TensorImage(DataType.FLOAT32);
     TensorBuffer probabilityBuffer =
-            TensorBuffer.createFixedSize(new int[]{1, 750,1000,3}, DataType.FLOAT32);
+            TensorBuffer.createFixedSize(new int[]{1, Height,Width,Channel}, DataType.FLOAT32);
     Interpreter tflite;// = new Interpreter(tfliteModel);
-    int[] inpShape = {1,750,1000,3};
+    int[] inpShape = {1,Height,Width,Channel};
     //**********************************************************************************************
 
 
@@ -513,13 +522,19 @@ public class Camera2RawFragment extends Fragment
     }
 
     public void rawToVisualBitmap(){
+        //uint16 to float32
         for (int i=0; i<imageBytes.length/2; i++){
             float out =  (float) ((imageBytes[i*2] & 0xFF) | ((imageBytes[i*2+1] & 0xFF) << 8));
             out = (out-64)/(1023-64)*255;
             outputArray[i]=((out));
         }
+        //
         for (int i=0; i< 3000; i=i+4){
+            if ((i/4) >= Height) continue;
+
             for (int j=0; j<4000; j=j+4) {
+                if ((j/4) >= Width) continue;
+
                 float g1 = (float) (outputArray[i * 4000 + j]);
                 float r = (float) (outputArray[(i+1) * 4000 + j]);
                 float b = (float) (outputArray[i * 4000 + j+1]);
@@ -529,12 +544,13 @@ public class Camera2RawFragment extends Fragment
 //                inputTensor[(i/4)*3000+(3*j/4)+1] = g;
 //                inputTensor[(i/4)*3000+(3*j/4)+2] = b;
 //                inputTensor[(i/4)*1000*4+(j/4)*4+3] = g;
-                inputTensor[((0*750*1000)+(i/4)*1000+(j/4))] = r;
-                inputTensor[((1*750*1000)+(i/4)*1000+(j/4))] = g;
-                inputTensor[((2*750*1000)+(i/4)*1000+(j/4))] = b;
+                inputTensor[((0*Height*Width)+(i/4)*Width+(j/4))] = r;
+                inputTensor[((1*Height*Width)+(i/4)*Width+(j/4))] = g;
+                inputTensor[((2*Height*Width)+(i/4)*Width+(j/4))] = b;
 
             }
         }
+
 //        for (int i=0; i< 3000; i=i+4){
 //            for (int j=0; j<4000; j=j+4) {
 //                float g1 = (float) (outputArray[i * 4000 + j]);
@@ -618,6 +634,7 @@ public class Camera2RawFragment extends Fragment
 //            }
             rawToVisualBitmap();
             input.load(inputTensor, inpShape);
+            Log.e("error", "finish load");
 //            try {
 //                int[] inpShape = {1,750,1000,3};
 //                TensorImage input = new TensorImage(DataType.FLOAT32);
@@ -636,28 +653,34 @@ public class Camera2RawFragment extends Fragment
 //
 //                Log.e("error", "init input output");
 
-                tflite.run(input.getBuffer(), probabilityBuffer.getBuffer());
+                ByteBuffer inpBuffer= input.getBuffer();
+                ByteBuffer outBuffer = probabilityBuffer.getBuffer();
+                long start = System.currentTimeMillis();
+                tflite.run(inpBuffer, outBuffer);
+                long runTime = System.currentTimeMillis()-start;
+                Log.e("error", "Model runTime:"+runTime);
                 Log.e("error", "finished run");
 
                 outputTensor = probabilityBuffer.getFloatArray();
-                for (int i=0; i< 750; i++){
-                    for (int j=0; j<1000; j++) {
+                for (int i=0; i< Height; i++){
+                    for (int j=0; j<Width; j++) {
 //                        byte r = (byte) (outputTensor[i * 3000 + (3*j)]);
 //                        byte g = (byte) (outputTensor[i * 3000 + (3*j)+1]);
 //                        byte b = (byte) (outputTensor[i * 3000 + (3*j)+2]);
-                        byte r = (byte) (outputTensor[(0*750*1000)+i*1000 + j]);
-                        byte g = (byte) (outputTensor[(1*750*1000)+i*1000 + j]);
-                        byte b = (byte) (outputTensor[(2*750*1000)+i*1000 + j]);
-                        outputArray2[i*4000+(4*j)+0] = r;
-                        outputArray2[i*4000+(4*j)+1] = g;
-                        outputArray2[i*4000+(4*j)+2] = b;
-                        outputArray2[i*4000+(4*j)+3] = -1;
+                        byte r = (byte) (outputTensor[(0*Height*Width)+i*Width + j]);
+                        byte g = (byte) (outputTensor[(1*Height*Width)+i*Width + j]);
+                        byte b = (byte) (outputTensor[(2*Height*Width)+i*Width + j]);
+                        outputArray2[(i*4*Width)+(4*j)+0] = r;
+                        outputArray2[(i*4*Width)+(4*j)+1] = g;
+                        outputArray2[(i*4*Width)+(4*j)+2] = b;
+                        outputArray2[(i*4*Width)+(4*j)+3] = -1;
 
                     }
                 }
 //                randomBitmap = output.getBitmap();
                 randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
                 mImageView.setImageBitmap(randomBitmap);
+
 //                Log.e("error", "outshape"+(outTensor.shape()[2])+(outTensor.shape()[3]));
 //            Log.e("error", String.valueOf(tflite.getOutputIndex((String)"output")));
 //            } catch (IOException e) {
@@ -728,7 +751,7 @@ public class Camera2RawFragment extends Fragment
         return v;
     }
     private MappedByteBuffer loadModelFile() throws IOException {
-        AssetFileDescriptor fileDescriptor= getResources().getAssets().openFd("pmrid.tflite");
+        AssetFileDescriptor fileDescriptor= getResources().getAssets().openFd("pmrid_sim.tflite");
         FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
         FileChannel fileChannel=inputStream.getChannel();
         long startOffset=fileDescriptor.getStartOffset();
@@ -738,17 +761,24 @@ public class Camera2RawFragment extends Fragment
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         Log.e("error", "onViewCreated2");
-        List<byte[]> array = new ArrayList<>();
-        for(int i=0;i<5;i++){
-            array.add(new byte[3000*4000*2]);
-
-        }
+//        List<byte[]> array = new ArrayList<>();
+//        for(int i=0;i<5;i++){
+//            array.add(new byte[3000*4000*2]);
+//
+//        }
 
 
         try {
             int numThreads = 4;
+            CompatibilityList compatList = new CompatibilityList();
+
+            GpuDelegate.Options delegateOptions = compatList.getBestOptionsForThisDevice();
+            GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions);
+
             Interpreter.Options tfLiteOptions = new Interpreter.Options();
             tfLiteOptions.setNumThreads(numThreads);
+            tfLiteOptions.setUseNNAPI(true);
+            tfLiteOptions.addDelegate(gpuDelegate);
             MappedByteBuffer tfliteModel;
             tfliteModel = loadModelFile();
             tflite = new Interpreter(tfliteModel, tfLiteOptions);
@@ -1209,7 +1239,7 @@ public class Camera2RawFragment extends Fragment
 
 
             List<CaptureRequest> listCaptureRequest = new ArrayList<>();
-            for(int i =0; i<30; i++){
+            for(int i =0; i<1; i++){
                 listCaptureRequest.add(mCaptureRequest);
             }
             mCaptureSession.captureBurst(listCaptureRequest, mCaptureCallback, mBackgroundHandler);
