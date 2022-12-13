@@ -16,8 +16,6 @@
 
 package com.example.android.camera2raw;
 
-import static org.tensorflow.lite.support.common.FileUtil.*;
-
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -28,11 +26,11 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
 import android.content.res.AssetFileDescriptor;
-import android.content.res.AssetManager;
 import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Point;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.hardware.SensorManager;
@@ -51,19 +49,15 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
-import android.os.SystemClock;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
-import android.text.method.KeyListener;
 import android.util.Log;
-import android.util.Range;
 import android.util.Size;
 import android.util.SparseIntArray;
 import android.view.KeyEvent;
@@ -78,14 +72,12 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import junit.framework.Assert;
-
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
@@ -95,24 +87,19 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
-import java.util.TreeMap;
+import java.util.Random;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.tensorflow.lite.DataType;
 import org.tensorflow.lite.Interpreter;
-import org.tensorflow.lite.Tensor;
 import org.tensorflow.lite.gpu.GpuDelegate;
-import org.tensorflow.lite.support.common.FileUtil;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
-import org.tensorflow.lite.task.core.BaseOptions;
 import org.tensorflow.lite.gpu.CompatibilityList;
-import org.tensorflow.lite.gpu.GpuDelegate;
+
 public class Camera2RawFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
@@ -324,8 +311,8 @@ public class Camera2RawFragment extends Fragment
     private long mCaptureTimer;
 
     //**********************************************************************************************
-    int Height = 1024;
-    int Width = 1024;
+    int Height = 1472;
+    int Width = 1984;
     int Channel = 3;
     private Image mImage;
     byte[] imageBytes = new byte[3000*4000*2];
@@ -681,7 +668,52 @@ public class Camera2RawFragment extends Fragment
                 randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
                 mImageView.setImageBitmap(randomBitmap);
 
-//                Log.e("error", "outshape"+(outTensor.shape()[2])+(outTensor.shape()[3]));
+                byte[] II = new byte[4000*3000*4];
+                for (int i=0; i< Height; i++){
+                    for (int j=0; j<Width; j++) {
+                        II[(i*4*Width)+(4*j)+0] = outputArray2[(i*4*Width)+(4*j)+0];
+                        II[(i*4*Width)+(4*j)+1] = outputArray2[(i*4*Width)+(4*j)+1];
+                        II[(i*4*Width)+(4*j)+2] = outputArray2[(i*4*Width)+(4*j)+2];
+                        II[(i*4*Width)+(4*j)+3] = outputArray2[(i*4*Width)+(4*j)+1];
+
+                    }
+                }
+
+//                Random rd = new Random();
+//                rd.nextBytes(II);
+
+                InputStream targetStream = new ByteArrayInputStream(imageBytes);
+                File rawFile = new File(Environment.
+                        getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                        "RAW_SHO" +generateTimestamp()+ ".dng");
+                Rect mRect = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE);
+
+                DngCreator dngCreator = new DngCreator(mCharacteristics, result);
+                FileOutputStream output = null;
+                Size imgSize = new Size(4000, 3000);
+                try {
+                    output = new FileOutputStream(rawFile);
+                    dngCreator.writeInputStream(output, imgSize, targetStream,0);
+                } catch (IOException e) {
+                e.printStackTrace();
+                }
+
+
+                MediaScannerConnection.scanFile(getContext(), new String[]{rawFile.getPath()},
+                        /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
+                            @Override
+                            public void onMediaScannerConnected() {
+                                // Do nothing
+                            }
+
+                            @Override
+                            public void onScanCompleted(String path, Uri uri) {
+                                Log.i(TAG, "Scanned " + path + ":");
+                                Log.i(TAG, "-> uri=" + uri);
+                            }
+                        });
+
+                Log.e("error", "Finished ever");
 //            Log.e("error", String.valueOf(tflite.getOutputIndex((String)"output")));
 //            } catch (IOException e) {
 //                e.printStackTrace();
@@ -1228,8 +1260,8 @@ public class Camera2RawFragment extends Fragment
             captureBuilder.addTarget(mRawImageReader.get().getSurface());
             captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
             captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-            captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 6400);
-            captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 5600000);//(long)(0.02 *1000000000));
+            captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 2000);
+            captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 56000000);//(long)(0.02 *1000000000));
             // Use the same AE and AF modes as the preview.
 //            setup3AControlsLocked(captureBuilder);
             // Set request tag to easily track results in callbacks.
@@ -1465,5 +1497,8 @@ public class Camera2RawFragment extends Fragment
         }
 
     }
-
+    private static String generateTimestamp() {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US);
+        return sdf.format(new Date());
+    }
 }
