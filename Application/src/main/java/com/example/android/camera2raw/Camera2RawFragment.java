@@ -55,6 +55,7 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
+import android.provider.ContactsContract;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
@@ -73,9 +74,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -99,6 +102,11 @@ import org.tensorflow.lite.gpu.GpuDelegate;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 import org.tensorflow.lite.gpu.CompatibilityList;
+import org.tensorflow.lite.support.tensorbuffer.TensorBufferFloat;
+
+import ai.djl.ndarray.NDArray;
+import ai.djl.ndarray.NDManager;
+import ai.djl.ndarray.types.Shape;
 
 public class Camera2RawFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -313,7 +321,7 @@ public class Camera2RawFragment extends Fragment
     //**********************************************************************************************
     int Height = 1472;
     int Width = 1984;
-    int Channel = 3;
+    int Channel = 4;
     private Image mImage;
     byte[] imageBytes = new byte[3000*4000*2];
     float[] outputArray = new float[3000*4000]; //1500,2000,4
@@ -338,12 +346,18 @@ public class Camera2RawFragment extends Fragment
     long maxShutterSpeed;
 
     //TFlite
-    TensorImage input = new TensorImage(DataType.FLOAT32);
+    TensorBuffer input = TensorBuffer.createFixedSize(new int[] {1, Height, Width, Channel}, DataType.FLOAT32);
+//    TensorImage input = new TensorImage(DataType.FLOAT32);
 //    TensorImage output = new TensorImage(DataType.FLOAT32);
     TensorBuffer probabilityBuffer =
             TensorBuffer.createFixedSize(new int[]{1, Height,Width,Channel}, DataType.FLOAT32);
     Interpreter tflite;// = new Interpreter(tfliteModel);
     int[] inpShape = {1,Height,Width,Channel};
+
+
+
+
+
     //**********************************************************************************************
 
 
@@ -512,31 +526,40 @@ public class Camera2RawFragment extends Fragment
         //uint16 to float32
         for (int i=0; i<imageBytes.length/2; i++){
             float out =  (float) ((imageBytes[i*2] & 0xFF) | ((imageBytes[i*2+1] & 0xFF) << 8));
-            out = (out-64)/(1023-64)*255;
+//            Log.e("error", "out is "+ out);
+            out = (out-64)/(1024-64);//*255;
+//            Log.e("error", "out is "+ out);
             outputArray[i]=((out));
         }
-        //
-        for (int i=0; i< 3000; i=i+4){
-            if ((i/4) >= Height) continue;
 
-            for (int j=0; j<4000; j=j+4) {
-                if ((j/4) >= Width) continue;
+        //
+        for (int i=0; i< 3000; i=i+2){
+            if ((i/2) >= Height) continue;
+
+            for (int j=0; j<4000; j=j+2) {
+                if ((j/2) >= Width) continue;
 
                 float g1 = (float) (outputArray[i * 4000 + j]);
                 float r = (float) (outputArray[(i+1) * 4000 + j]);
                 float b = (float) (outputArray[i * 4000 + j+1]);
                 float g2 = (float) (outputArray[(i+1) * 4000 + j+1]);
-                float g = (float) ((g1+g2)/2);
-//                inputTensor[(i/4)*3000+(3*j/4)+0] = r;
-//                inputTensor[(i/4)*3000+(3*j/4)+1] = g;
-//                inputTensor[(i/4)*3000+(3*j/4)+2] = b;
-//                inputTensor[(i/4)*1000*4+(j/4)*4+3] = g;
-                inputTensor[((0*Height*Width)+(i/4)*Width+(j/4))] = r;
-                inputTensor[((1*Height*Width)+(i/4)*Width+(j/4))] = g;
-                inputTensor[((2*Height*Width)+(i/4)*Width+(j/4))] = b;
+//                float g = (float) ((g1+g2)/2);
+                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 0] = r;
+                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 1] = g1;
+                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 2] = b;
+                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 3] = g2;
 
+//                inputTensor[(i/4)*3000+(3*j/4)+0] = r;
+//                inputTensor[(i/4)*3000+(3*j/4)+1] = g1;
+//                inputTensor[(i/4)*3000+(3*j/4)+2] = b;
+//                inputTensor[(i/4)*1000*4+(j/4)+3] = g2;
+//                inputTensor[((0*Height*Width)+(i/4)*Width+(j/4))] = r;
+//                inputTensor[((1*Height*Width)+(i/4)*Width+(j/4))] = g1;
+//                inputTensor[((2*Height*Width)+(i/4)*Width+(j/4))] = b;
+//                inputTensor[((3*Height*Width)+(i/4)*Width+(j/4))] = g2;
             }
         }
+
 
 //        for (int i=0; i< 3000; i=i+4){
 //            for (int j=0; j<4000; j=j+4) {
@@ -570,6 +593,7 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
+
             Log.e("error", "exp:"+result.get(CaptureResult.SENSOR_SENSITIVITY));
 //            float[][][][] input = new float[1][4][750][1500];
 //            for(int c=0; c<4;c++){
@@ -620,7 +644,9 @@ public class Camera2RawFragment extends Fragment
 //                }
 //            }
             rawToVisualBitmap();
-            input.load(inputTensor, inpShape);
+            Log.e("error", "finish rawToVisualBitmap");
+            input.loadArray(inputTensor);
+//            input.load(inputTensor, inpShape);
             Log.e("error", "finish load");
 //            try {
 //                int[] inpShape = {1,750,1000,3};
@@ -647,42 +673,148 @@ public class Camera2RawFragment extends Fragment
                 long runTime = System.currentTimeMillis()-start;
                 Log.e("error", "Model runTime:"+runTime);
                 Log.e("error", "finished run");
-
                 outputTensor = probabilityBuffer.getFloatArray();
-                for (int i=0; i< Height; i++){
-                    for (int j=0; j<Width; j++) {
-//                        byte r = (byte) (outputTensor[i * 3000 + (3*j)]);
-//                        byte g = (byte) (outputTensor[i * 3000 + (3*j)+1]);
-//                        byte b = (byte) (outputTensor[i * 3000 + (3*j)+2]);
-                        byte r = (byte) (outputTensor[(0*Height*Width)+i*Width + j]);
-                        byte g = (byte) (outputTensor[(1*Height*Width)+i*Width + j]);
-                        byte b = (byte) (outputTensor[(2*Height*Width)+i*Width + j]);
-                        outputArray2[(i*4*Width)+(4*j)+0] = r;
-                        outputArray2[(i*4*Width)+(4*j)+1] = g;
-                        outputArray2[(i*4*Width)+(4*j)+2] = b;
-                        outputArray2[(i*4*Width)+(4*j)+3] = -1;
+//            outputTensor=input.getFloatArray();
+//                outputTensor = input.getFloatArray();
+//                byte[] saveArray = new byte[1*Channel*Height*Width*2];
+//                for(int i=0;i<outputTensor.length;i++){
+//                    int tmp = (int) (outputTensor[i]*1024);
+//                    byte tmp0 = (byte) (tmp & 0xFF);
+//                    byte tmp1 = (byte) ((tmp >> 8) & 0xFF);
+////                    byte tmp = (byte) (outputTensor[i]*255);
+//                    saveArray[(2*i)+0]=tmp1;
+//                    saveArray[(2*i)+1]=tmp0;
+//                }
+//                File rawsave = new File(Environment.
+//                        getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+//                        "TMP" + ".dng");
+//                try {
+//                    if (!rawsave.exists()) {
+//                        rawsave.createNewFile();
+//                    }
+//                    FileOutputStream fos = new FileOutputStream(rawsave);
+//                    fos.write(saveArray);
+//                    fos.close();
+//                } catch (Exception e) {
+//                    Log.e(TAG, e.getMessage());
+//                }
 
+//                for (int i=0; i< Height; i++){
+//                    for (int j=0; j<Width; j++) {
+////                        byte r = (byte) (outputTensor[i * 3000 + (3*j)]);
+////                        byte g = (byte) (outputTensor[i * 3000 + (3*j)+1]);
+////                        byte b = (byte) (outputTensor[i * 3000 + (3*j)+2]);
+//                        byte r = (byte) (outputTensor[(0*Height*Width)+i*Width + j]);
+//                        byte g = (byte) (outputTensor[(1*Height*Width)+i*Width + j]);
+//                        byte b = (byte) (outputTensor[(2*Height*Width)+i*Width + j]);
+//                        outputArray2[(i*4*Width)+(4*j)+0] = r;
+//                        outputArray2[(i*4*Width)+(4*j)+1] = g;
+//                        outputArray2[(i*4*Width)+(4*j)+2] = b;
+//                        outputArray2[(i*4*Width)+(4*j)+3] = -1;
+//
+//                    }
+//                }
+
+//                randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
+//                mImageView.setImageBitmap(randomBitmap);
+
+
+//
+//            data[0] = (byte) (width & 0xFF);
+//            data[1] = (byte) ((width >> 8) & 0xFF);
+
+
+//            for(int i=0;i<Height;i++) {
+//                for(int j=0;j<Width;j++) {
+//                    int r = (int)(outputTensor[i*Height*Width+j*Channel+0]*(1024-64));
+//                    int g1 = (int)(outputTensor[i*Height*Width+j*Channel+1]*(1024-64));
+//                    int b = (int)(outputTensor[i*Height*Width+j*Channel+2]*(1024-64));
+//                    int g2 = (int)(outputTensor[i*Height*Width+j*Channel+3]*(1024-64));
+//
+//                    imageBytes[i*3000*4000+j*4000]=0;
+//
+//                }
+//            }
+
+
+//            ByteBuffer bb = probabilityBuffer.getBuffer();
+////            byte[] saveArray = outBuffer.array();
+//            byte[] saveArray = bb.array();
+
+
+//            for(int i=0;i<Height;i++) {
+//                for(int j=0;j<Width;j++) {
+//                    imageBytes[(i*2)*4000*2+(j*2)*2+0] = saveArray[i*Width*2+j*2+1];
+//                    imageBytes[(i*2)*4000*2+(j*2)*2+1] = saveArray[i*Width*2+j*2+0];
+//
+//                }
+//            }
+//            Log.e("error", "saveArray len is"+saveArray.length);
+            byte[] imageBytes2 = new byte[3000*4000*2];
+            for(int i=0;i<Height;i++) {
+                for(int j=0;j<Width;j++) {
+
+                        int tmpr = (int) (outputTensor[i*Width*Channel+j*Channel+0]*(1024-64)+64);
+//                        Log.e("error", "tmpris"+outputTensor[i*Width*Channel+j*Channel+0]);
+//                        Log.e("error", "tmpr is:"+tmpr);
+                        byte tmpr_0 = (byte) (tmpr & 0xFF);
+                        byte tmpr_1 = (byte) ((tmpr >> 8) & 0xFF);
+
+                        int tmpg1 = (int) (outputTensor[i*Width*Channel+j*Channel+1]*(1024-64)+64);
+                        byte tmpg1_0 = (byte) (tmpg1 & 0xFF);
+                        byte tmpg1_1 = (byte) ((tmpg1 >> 8) & 0xFF);
+
+                        int tmpb = (int) (outputTensor[i*Width*Channel+j*Channel+2]*(1024-64)+64);
+                        byte tmpb_0 = (byte) (tmpb & 0xFF);
+                        byte tmpb_1 = (byte) ((tmpb >> 8) & 0xFF);
+
+                        int tmpg2 = (int) (outputTensor[i*Width*Channel+j*Channel+3]*(1024-64)+64);
+                        byte tmpg2_0 = (byte) (tmpg2 & 0xFF);
+                        byte tmpg2_1 = (byte) ((tmpg2 >> 8) & 0xFF);
+
+                    imageBytes2[(i*2)*4000*2+(j*2)*2+0] = tmpg1_0;
+                    imageBytes2[(i*2)*4000*2+(j*2)*2+1] = tmpg1_1;
+
+
+                    imageBytes2[(i*2)*4000*2+(j*2+1)*2+0] = tmpb_0;
+                    imageBytes2[(i*2)*4000*2+(j*2+1)*2+1] = tmpb_1;
+//
+                    imageBytes2[(i*2+1)*4000*2+(j*2)*2+0] = tmpr_0;
+                    imageBytes2[(i*2+1)*4000*2+(j*2)*2+1] = tmpr_1;
+//
+                    imageBytes2[(i*2+1)*4000*2+(j*2+1)*2+0] = tmpg2_0;
+                    imageBytes2[(i*2+1)*4000*2+(j*2+1)*2+1] = tmpg2_1;
+
+
+//                    }
                     }
                 }
-//                randomBitmap = output.getBitmap();
-                randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
-                mImageView.setImageBitmap(randomBitmap);
+//                for(int i=0;i<Height*Width*Channel;i++){
+//                    int tmp = (int) (outputTensor[i]*1024);
+//                    byte tmp0 = (byte) (tmp & 0xFF);
+//                    byte tmp1 = (byte) ((tmp >> 8) & 0xFF);
+////                    Log.e("error", "tmp is "+outputTensor[i]);
+//                    imageBytes[2*i]=tmp1;
+//                    imageBytes[(2*i)+1]=tmp0;
+//
+//                }
+//            }
 
-                byte[] II = new byte[4000*3000*4];
-                for (int i=0; i< Height; i++){
-                    for (int j=0; j<Width; j++) {
-                        II[(i*4*Width)+(4*j)+0] = outputArray2[(i*4*Width)+(4*j)+0];
-                        II[(i*4*Width)+(4*j)+1] = outputArray2[(i*4*Width)+(4*j)+1];
-                        II[(i*4*Width)+(4*j)+2] = outputArray2[(i*4*Width)+(4*j)+2];
-                        II[(i*4*Width)+(4*j)+3] = outputArray2[(i*4*Width)+(4*j)+1];
-
-                    }
-                }
+//                byte[] II = new byte[4000*3000*4];
+//                for (int i=0; i< Height; i++){
+//                    for (int j=0; j<Width; j++) {
+//                        II[(i*4*Width)+(4*j)+0] = outputArray2[(i*4*Width)+(4*j)+0];
+//                        II[(i*4*Width)+(4*j)+1] = outputArray2[(i*4*Width)+(4*j)+1];
+//                        II[(i*4*Width)+(4*j)+2] = outputArray2[(i*4*Width)+(4*j)+2];
+//                        II[(i*4*Width)+(4*j)+3] = outputArray2[(i*4*Width)+(4*j)+1];
+//
+//                    }
+//                }
 
 //                Random rd = new Random();
 //                rd.nextBytes(II);
 
-                InputStream targetStream = new ByteArrayInputStream(imageBytes);
+                InputStream targetStream = new ByteArrayInputStream(imageBytes2);
                 File rawFile = new File(Environment.
                         getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
                         "RAW_SHO" +generateTimestamp()+ ".dng");
@@ -798,8 +930,6 @@ public class Camera2RawFragment extends Fragment
 //            array.add(new byte[3000*4000*2]);
 //
 //        }
-
-
         try {
             int numThreads = 4;
             CompatibilityList compatList = new CompatibilityList();
@@ -1255,13 +1385,13 @@ public class Camera2RawFragment extends Fragment
 
             // This is the CaptureRequest.Builder that we use to take a picture.
 //            final CaptureRequest.Builder captureBuilder =
-
+            float toUS = 1000000000;
             captureBuilder= mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureBuilder.addTarget(mRawImageReader.get().getSurface());
             captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
             captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
             captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 2000);
-            captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 56000000);//(long)(0.02 *1000000000));
+            captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 560000);//(long)(0.02 *1000000000));
             // Use the same AE and AF modes as the preview.
 //            setup3AControlsLocked(captureBuilder);
             // Set request tag to easily track results in callbacks.
