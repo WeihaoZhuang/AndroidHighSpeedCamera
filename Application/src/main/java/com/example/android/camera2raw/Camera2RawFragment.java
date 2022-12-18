@@ -49,6 +49,7 @@ import android.media.Image;
 import android.media.ImageReader;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
@@ -81,6 +82,7 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
@@ -92,8 +94,11 @@ import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
+import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.tensorflow.lite.DataType;
@@ -321,16 +326,18 @@ public class Camera2RawFragment extends Fragment
     private long mCaptureTimer;
 
     //**********************************************************************************************
+    private final TreeMap<Integer, ImageSaver.ImageSaverBuilder> mRawResultQueue = new TreeMap<>();
+    private ImageReader mImageReader;
     long toUS = 1000000000;
     int mISO;
     long mShutterSpeed;
     int mRatio=1;
-    int Height = 1472;
-    int Width = 1984;
+    int Height = 1488;
+    int Width = 2000;
     int Channel = 4;
     long gtExposure;
     int gtIso;
-    Size largestRaw;
+    private Size largestRaw;
     private Image mImage;
     byte[] imageBytes;// = new byte[3000*4000*2];
 //    float[] outputArray = new float[3000*4000]; //1500,2000,4
@@ -384,7 +391,9 @@ public class Camera2RawFragment extends Fragment
                 mState = STATE_OPENED;
                 mCameraOpenCloseLock.release();
                 mCameraDevice = cameraDevice;
-
+                if (mPreviewSize != null && mTextureView.isAvailable()) {
+                    createCameraPreviewSessionLocked();
+                }
             }
         }
 
@@ -431,17 +440,17 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onImageAvailable(ImageReader reader) {
 //            synchronized (mCameraStateLock) {
+//            mImage = mRawImageReader.get().acquireLatestImage();
+//            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+//            buffer.get(imageBytes);
+//            Log.e("error", "imageBytes:"+imageBytes[0]+" "+imageBytes[1]);
+//            mImage.close();
+//
+//
+//            }
 
-            pend = pend + 1;
-            Log.e("Filming", "onImageAva");
-            mImage = mRawImageReader.get().acquireLatestImage();
-            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-            buffer.get(imageBytes);
-            Log.e("error", "imageBytes:"+imageBytes[0]+" "+imageBytes[1]);
-//            listBuffer.add(buffer);
-            mImage.close();
-            }
-//        }
+            dequeueAndSaveImage(mRawResultQueue, mRawImageReader);
+        }
     };
 
 
@@ -651,302 +660,121 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
-            synchronized (mCameraStateLock) {
-
-                Log.e("error", "exp:" + result.get(CaptureResult.SENSOR_SENSITIVITY));
-//            float[][][][] input = new float[1][4][750][1500];
-//            for(int c=0; c<4;c++){
-//                for(int h=0;h<750;h++){
-//                    for(int w=0;w<1500;w++){
-//                        input[0][c][h][w]= 1;//outputArray2[c*750*1500+h*1500+w];
-//                    }
-//                }
-//            }
-//            if(pend==30) {
-//                pend = 0;
-//                byte[] x = new byte[3000*4000*2];
-//                Log.e("error", "aa");
-//                for (final ByteBuffer bb : listBuffer) {
-////                    try {
-////                        Thread.sleep(2000);
-////                    } catch (InterruptedException e) {
-////                        e.printStackTrace();
-////                    }
-//                    bb.get(x);
-//                    Log.e("error", "pp");
-//                    for (int i = 0; i < x.length / 2; i++) {
-//                        float out = (float) ((x[i * 2] & 0xFF) | ((x[i * 2 + 1] & 0xFF) << 8));
-//                        out = (out - 64) / (1023 - 64) * 255;
-//                        outputArray[i] = ((out));
-//                    }
-//
-//                    for (int i = 0; i < 3000; i = i + 4) {
-//                        for (int j = 0; j < 4000; j = j + 4) {
-//                            float g1 = (float) (outputArray[i * 4000 + j]);
-//                            byte b = (byte) (outputArray[(i + 1) * 4000 + j]);
-//                            byte r = (byte) (outputArray[i * 4000 + j + 1]);
-//                            float g2 = (float) (outputArray[(i + 1) * 4000 + j + 1]);
-//                            byte g = (byte) ((g1 + g2) / 2);
-//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 0] = r;
-//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 1] = g;
-//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 2] = b;
-//                            outputArray2[(i / 4) * 1000 * 4 + (j / 4) * 4 + 3] = -1;
-//
-//                        }
-//                    }
-//                    Log.e("error", "pix:"+outputArray2[0]);
-//                    randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
-//                    mImageView.setImageBitmap(randomBitmap);
-//                    //what ever you do here will be done after 3 seconds delay.
-//
-//
-//                }
-//            }
-                rawToVisualBitmap();
-                input.loadArray(inputTensor);
-//            input.load(inputTensor, inpShape);
-//            try {
-//                int[] inpShape = {1,750,1000,3};
-//                TensorImage input = new TensorImage(DataType.FLOAT32);
-//                input.load(inputTensor, inpShape);
-//
-//                TensorImage output = new TensorImage(DataType.FLOAT32);
-//                output.load(outputTensor, inpShape);
-//
-//                TensorBuffer probabilityBuffer =
-//                        TensorBuffer.createFixedSize(new int[]{1, 750,1000,3}, DataType.FLOAT32);
-//
-//                MappedByteBuffer tfliteModel;
-//                tfliteModel = loadModelFile();
-//                Interpreter tflite = new Interpreter(tfliteModel);
-//                Log.e("error", "load pmrid model");
-//
-//                Log.e("error", "init input output");
-
-                ByteBuffer inpBuffer = input.getBuffer();
-                ByteBuffer outBuffer = probabilityBuffer.getBuffer();
-                long start = System.currentTimeMillis();
-                tflite.run(inpBuffer, outBuffer);
-                long runTime = System.currentTimeMillis() - start;
-                Log.e("error", "Model runTime:" + runTime);
-                outputTensor = probabilityBuffer.getFloatArray();
-//            outputTensor=input.getFloatArray();
-//               outputTensor = input.getFloatArray();
-
-//                try {
-//                    outputTensor = input.getFloatArray();
-//                    byte[] saveArray = new byte[1 * Channel * Height * Width * 2];
-//                    for (int i = 0; i < outputTensor.length; i++) {
-//                        int tmp = (int) (outputTensor[i] * (1024 - 64) + 64);
-////                        Log.e("error", "tmp is "+ outputTensor[i]);
-//                        byte tmp0 = (byte) (tmp & 0xFF);
-//                        byte tmp1 = (byte) ((tmp >> 8) & 0xFF);
-////                    byte tmp = (byte) (outputTensor[i]*255);
-//                        saveArray[(2 * i) + 0] = tmp1;
-//                        saveArray[(2 * i) + 1] = tmp0;
-//                    }
-//                    File rawsave = new File(Environment.
-//                            getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-//                            "TMP2" + ".dng");
-//                    if (!rawsave.exists()) {
-//                        rawsave.createNewFile();
-//                    }
-//                    FileOutputStream fos = new FileOutputStream(rawsave);
-//                    fos.write(saveArray);
-//                    fos.close();
-//                } catch (Exception e) {
-//                    Log.e(TAG, e.getMessage());
-//                }
-
-//                for (int i=0; i< Height; i++){
-//                    for (int j=0; j<Width; j++) {
-////                        byte r = (byte) (outputTensor[i * 3000 + (3*j)]);
-////                        byte g = (byte) (outputTensor[i * 3000 + (3*j)+1]);
-////                        byte b = (byte) (outputTensor[i * 3000 + (3*j)+2]);
-//                        byte r = (byte) (outputTensor[(0*Height*Width)+i*Width + j]);
-//                        byte g = (byte) (outputTensor[(1*Height*Width)+i*Width + j]);
-//                        byte b = (byte) (outputTensor[(2*Height*Width)+i*Width + j]);
-//                        outputArray2[(i*4*Width)+(4*j)+0] = r;
-//                        outputArray2[(i*4*Width)+(4*j)+1] = g;
-//                        outputArray2[(i*4*Width)+(4*j)+2] = b;
-//                        outputArray2[(i*4*Width)+(4*j)+3] = -1;
-//
-//                    }
-//                }
-
-//                randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
-//                mImageView.setImageBitmap(randomBitmap);
-
-
-//
-//            data[0] = (byte) (width & 0xFF);
-//            data[1] = (byte) ((width >> 8) & 0xFF);
-
-
-//            for(int i=0;i<Height;i++) {
-//                for(int j=0;j<Width;j++) {
-//                    int r = (int)(outputTensor[i*Height*Width+j*Channel+0]*(1024-64));
-//                    int g1 = (int)(outputTensor[i*Height*Width+j*Channel+1]*(1024-64));
-//                    int b = (int)(outputTensor[i*Height*Width+j*Channel+2]*(1024-64));
-//                    int g2 = (int)(outputTensor[i*Height*Width+j*Channel+3]*(1024-64));
-//
-//                    imageBytes[i*3000*4000+j*4000]=0;
-//
-//                }
-//            }
-
-
-//            ByteBuffer bb = probabilityBuffer.getBuffer();
-////            byte[] saveArray = outBuffer.array();
-//            byte[] saveArray = bb.array();
-
-
-//            for(int i=0;i<Height;i++) {
-//                for(int j=0;j<Width;j++) {
-//                    imageBytes[(i*2)*4000*2+(j*2)*2+0] = saveArray[i*Width*2+j*2+1];
-//                    imageBytes[(i*2)*4000*2+(j*2)*2+1] = saveArray[i*Width*2+j*2+0];
-//
-//                }
-//            }
-//            Log.e("error", "saveArray len is"+saveArray.length);
-//            outputTensor = input.getFloatArray();
-
-//            try {
-//                    outputTensor = probabilityBuffer.getFloatArray();
-//                    byte[] saveArray = new byte[1*Channel*Height*Width*2];
-//                    for(int i=0;i<outputTensor.length;i++){
-//                        float out = outputTensor[i];
-//                        out = (float) Math.pow(out, 2.22);
-//                        int tmp = (int) (out*(1024-64)+64);
-////                        Log.e("error", "tmp is "+ outputTensor[i]);
-//                        byte tmp0 = (byte) (tmp & 0xFF);
-//                        byte tmp1 = (byte) ((tmp >> 8) & 0xFF);
-////                    byte tmp = (byte) (outputTensor[i]*255);
-//                        saveArray[(2*i)+0]=tmp1;
-//                        saveArray[(2*i)+1]=tmp0;
-//                    }
-//                    File rawsave = new File(Environment.
-//                            getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-//                            "TMP2" + ".dng");
-//                    if (!rawsave.exists()) {
-//                        rawsave.createNewFile();
-//                    }
-//                    FileOutputStream fos = new FileOutputStream(rawsave);
-//                    fos.write(saveArray);
-//                    fos.close();
-//                } catch (Exception e) {
-//                    Log.e(TAG, e.getMessage());
-//                }
-
-
-                for (int i = 0; i < Height; i++) {
-                    for (int j = 0; j < Width; j++) {
-
-                        float r = outputTensor[i * Width * Channel + j * Channel + 0];
-                        float g1 = outputTensor[i * Width * Channel + j * Channel + 1];
-                        float b = outputTensor[i * Width * Channel + j * Channel + 2];
-                        float g2 = outputTensor[i * Width * Channel + j * Channel + 3];
-
-                        r = (float) Math.pow(customReLU(r), 2.22);
-                        g1 = (float) Math.pow(customReLU(g1), 2.22);
-                        b = (float) Math.pow(customReLU(b), 2.22);
-                        g2 = (float) Math.pow(customReLU(g2), 2.22);
-
-
-                        int tmpr = (int) (r * (1024 - 64) + 64);
-                        byte tmpr_0 = (byte) (tmpr & 0xFF);
-                        byte tmpr_1 = (byte) ((tmpr >> 8) & 0xFF);
-
-                        int tmpg1 = (int) (g1 * (1024 - 64) + 64);
-                        byte tmpg1_0 = (byte) (tmpg1 & 0xFF);
-                        byte tmpg1_1 = (byte) ((tmpg1 >> 8) & 0xFF);
-
-                        int tmpb = (int) (b * (1024 - 64) + 64);
-                        byte tmpb_0 = (byte) (tmpb & 0xFF);
-                        byte tmpb_1 = (byte) ((tmpb >> 8) & 0xFF);
-
-                        int tmpg2 = (int) (g2 * (1024 - 64) + 64);
-                        byte tmpg2_0 = (byte) (tmpg2 & 0xFF);
-                        byte tmpg2_1 = (byte) ((tmpg2 >> 8) & 0xFF);
-
-                        imageBytes[(i * 2) * 4000 * 2 + (j * 2) * 2 + 0] = tmpg1_0;
-                        imageBytes[(i * 2) * 4000 * 2 + (j * 2) * 2 + 1] = tmpg1_1;
-
-
-                        imageBytes[(i * 2) * 4000 * 2 + (j * 2 + 1) * 2 + 0] = tmpb_0;
-                        imageBytes[(i * 2) * 4000 * 2 + (j * 2 + 1) * 2 + 1] = tmpb_1;
-//
-                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2) * 2 + 0] = tmpr_0;
-                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2) * 2 + 1] = tmpr_1;
-//
-                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2 + 1) * 2 + 0] = tmpg2_0;
-                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2 + 1) * 2 + 1] = tmpg2_1;
-
-
-//                    }
-                    }
-                }
-//                for(int i=0;i<Height*Width*Channel;i++){
-//                    int tmp = (int) (outputTensor[i]*1024);
-//                    byte tmp0 = (byte) (tmp & 0xFF);
-//                    byte tmp1 = (byte) ((tmp >> 8) & 0xFF);
-////                    Log.e("error", "tmp is "+outputTensor[i]);
-//                    imageBytes[2*i]=tmp1;
-//                    imageBytes[(2*i)+1]=tmp0;
-//
-//                }
-//            }
-
-//                byte[] II = new byte[4000*3000*4];
-//                for (int i=0; i< Height; i++){
-//                    for (int j=0; j<Width; j++) {
-//                        II[(i*4*Width)+(4*j)+0] = outputArray2[(i*4*Width)+(4*j)+0];
-//                        II[(i*4*Width)+(4*j)+1] = outputArray2[(i*4*Width)+(4*j)+1];
-//                        II[(i*4*Width)+(4*j)+2] = outputArray2[(i*4*Width)+(4*j)+2];
-//                        II[(i*4*Width)+(4*j)+3] = outputArray2[(i*4*Width)+(4*j)+1];
-//
-//                    }
-//                }
-
-//                Random rd = new Random();
-//                rd.nextBytes(II);
-
-                InputStream targetStream = new ByteArrayInputStream(imageBytes);
-                File rawFile = new File(Environment.
+            int requestId = (int) request.getTag();
+            ImageSaver.ImageSaverBuilder rawBuilder;
+            StringBuilder sb = new StringBuilder();
+            File rawFile = new File(Environment.
                         getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
                         "RAW_" + generateTimestamp() + ".dng");
-                Rect mRect = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE);
+            synchronized (mCameraStateLock) {
 
-                DngCreator dngCreator = new DngCreator(mCharacteristics, result);
-                FileOutputStream output = null;
-
-                try {
-                    output = new FileOutputStream(rawFile);
-                    dngCreator.writeInputStream(output, largestRaw, targetStream, 0);
-                } catch (IOException e) {
-                    e.printStackTrace();
+                rawBuilder = mRawResultQueue.get(requestId);
+                if (rawBuilder != null) {
+                    rawBuilder.setFile(rawFile);
+                    rawBuilder.setResult(result);
+                    rawBuilder.setLargetSize(largestRaw);
+                    rawBuilder.setTFLiteModel(tflite);
+                    rawBuilder.setRate(mRatio);
+                    sb.append("Saving RAW as: ");
+                    sb.append(rawBuilder.getSaveLocation());
                 }
+                handleCompletionLocked(requestId, rawBuilder, mRawResultQueue);
 
 
-                MediaScannerConnection.scanFile(getContext(), new String[]{rawFile.getPath()},
-                        /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
-                            @Override
-                            public void onMediaScannerConnected() {
-                                // Do nothing
-                            }
+//                Log.e("error", "exp:" + result.get(CaptureResult.SENSOR_SENSITIVITY));
+//                rawToVisualBitmap();
+//                input.loadArray(inputTensor);
+//
+//
+//                ByteBuffer inpBuffer = input.getBuffer();
+//                ByteBuffer outBuffer = probabilityBuffer.getBuffer();
+//                long start = System.currentTimeMillis();
+//                tflite.run(inpBuffer, outBuffer);
+//                long runTime = System.currentTimeMillis() - start;
+//                Log.e("error", "Model runTime:" + runTime);
+//                outputTensor = probabilityBuffer.getFloatArray();
+//
+//                for (int i = 0; i < Height; i++) {
+//                    for (int j = 0; j < Width; j++) {
+//
+//                        float r = outputTensor[i * Width * Channel + j * Channel + 0];
+//                        float g1 = outputTensor[i * Width * Channel + j * Channel + 1];
+//                        float b = outputTensor[i * Width * Channel + j * Channel + 2];
+//                        float g2 = outputTensor[i * Width * Channel + j * Channel + 3];
+//
+//                        r = (float) Math.pow(customReLU(r), 2.22);
+//                        g1 = (float) Math.pow(customReLU(g1), 2.22);
+//                        b = (float) Math.pow(customReLU(b), 2.22);
+//                        g2 = (float) Math.pow(customReLU(g2), 2.22);
+//
+//
+//                        int tmpr = (int) (r * (1024 - 64) + 64);
+//                        byte tmpr_0 = (byte) (tmpr & 0xFF);
+//                        byte tmpr_1 = (byte) ((tmpr >> 8) & 0xFF);
+//
+//                        int tmpg1 = (int) (g1 * (1024 - 64) + 64);
+//                        byte tmpg1_0 = (byte) (tmpg1 & 0xFF);
+//                        byte tmpg1_1 = (byte) ((tmpg1 >> 8) & 0xFF);
+//
+//                        int tmpb = (int) (b * (1024 - 64) + 64);
+//                        byte tmpb_0 = (byte) (tmpb & 0xFF);
+//                        byte tmpb_1 = (byte) ((tmpb >> 8) & 0xFF);
+//
+//                        int tmpg2 = (int) (g2 * (1024 - 64) + 64);
+//                        byte tmpg2_0 = (byte) (tmpg2 & 0xFF);
+//                        byte tmpg2_1 = (byte) ((tmpg2 >> 8) & 0xFF);
+//
+//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2) * 2 + 0] = tmpg1_0;
+//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2) * 2 + 1] = tmpg1_1;
+//
+//
+//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2 + 1) * 2 + 0] = tmpb_0;
+//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2 + 1) * 2 + 1] = tmpb_1;
+////
+//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2) * 2 + 0] = tmpr_0;
+//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2) * 2 + 1] = tmpr_1;
+////
+//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2 + 1) * 2 + 0] = tmpg2_0;
+//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2 + 1) * 2 + 1] = tmpg2_1;
+//
+//
+////                    }
+//                    }
+//                }
+//
+//                InputStream targetStream = new ByteArrayInputStream(imageBytes);
+//                File rawFile = new File(Environment.
+//                        getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+//                        "RAW_" + generateTimestamp() + ".dng");
+//                Rect mRect = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE);
+//
+//                DngCreator dngCreator = new DngCreator(mCharacteristics, result);
+//                FileOutputStream output = null;
+//
+//                try {
+//                    output = new FileOutputStream(rawFile);
+//                    dngCreator.writeInputStream(output, largestRaw, targetStream, 0);
+//                } catch (IOException e) {
+//                    e.printStackTrace();
+//                }
+//
+//
+//                MediaScannerConnection.scanFile(getContext(), new String[]{rawFile.getPath()},
+//                        /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
+//                            @Override
+//                            public void onMediaScannerConnected() {
+//                                // Do nothing
+//                            }
+//
+//                            @Override
+//                            public void onScanCompleted(String path, Uri uri) {
+//                                Log.i(TAG, "Scanned " + path + ":");
+//                                Log.i(TAG, "-> uri=" + uri);
+//                            }
+//                        });
+//
+//                Log.e("error", "Finished ever");
 
-                            @Override
-                            public void onScanCompleted(String path, Uri uri) {
-                                Log.i(TAG, "Scanned " + path + ":");
-                                Log.i(TAG, "-> uri=" + uri);
-                            }
-                        });
-
-                Log.e("error", "Finished ever");
-//            Log.e("error", String.valueOf(tflite.getOutputIndex((String)"output")));
-//            } catch (IOException e) {
-//                e.printStackTrace();
-//            }
             }
         }
 
@@ -984,76 +812,66 @@ public class Camera2RawFragment extends Fragment
 
 
         final View v = inflater.inflate(R.layout.fragment_camera2_basic, container, false);
-        v.setOnKeyListener(new View.OnKeyListener() {
-            @Override
-            public boolean onKey(View v, int keyCode, KeyEvent event) {
-                // KeyEvent.ACTION_DOWN以外のイベントを無視する
-                // （これがないとKeyEvent.ACTION_UPもフックしてしまう）
-                if(event.getAction() != KeyEvent.ACTION_DOWN) {
-                    return false;
-                }
 
-                switch(keyCode) {
-                    case KeyEvent.KEYCODE_VOLUME_UP:
-                        // TODO:音量増加キーが押された時のイベント
-                        Log.e("error", "press");
-                        return true;
-                    case KeyEvent.KEYCODE_VOLUME_DOWN:
-                        // TODO:音量減少キーが押された時のイベント
-                        return true;
-                    default:
-                        return false;
-                }
-            }
-        });
-
-        // View#setFocusableInTouchModeでtrueをセットしておくこと
-        v.setFocusableInTouchMode(true);
         return v;
     }
-    private MappedByteBuffer loadModelFile() throws IOException {
+    private Interpreter loadModelFile() throws IOException {
         AssetFileDescriptor fileDescriptor= getResources().getAssets().openFd("model_float32.tflite");
         FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
         FileChannel fileChannel=inputStream.getChannel();
         long startOffset=fileDescriptor.getStartOffset();
         long declareLength=fileDescriptor.getDeclaredLength();
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY,startOffset,declareLength);
+
+        int numThreads = 4;
+        CompatibilityList compatList = new CompatibilityList();
+
+        GpuDelegate.Options delegateOptions = compatList.getBestOptionsForThisDevice();
+        GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions);
+        Interpreter.Options tfLiteOptions = new Interpreter.Options();
+        tfLiteOptions.setNumThreads(numThreads);
+        tfLiteOptions.setUseNNAPI(true);
+        tfLiteOptions.addDelegate(gpuDelegate);
+        MappedByteBuffer tfliteModel;
+        tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY,startOffset,declareLength);
+        Interpreter tflite = new Interpreter(tfliteModel, tfLiteOptions);
+        return tflite;
     }
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         Log.e("error", "onViewCreated2");
-//        List<byte[]> array = new ArrayList<>();
-//        for(int i=0;i<5;i++){
-//            array.add(new byte[3000*4000*2]);
-//
-//        }
-        try {
-            int numThreads = 4;
-            CompatibilityList compatList = new CompatibilityList();
 
-            GpuDelegate.Options delegateOptions = compatList.getBestOptionsForThisDevice();
-            GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions);
-            Interpreter.Options tfLiteOptions = new Interpreter.Options();
-            tfLiteOptions.setNumThreads(numThreads);
+        try {
+//            int numThreads = 4;
+//            CompatibilityList compatList = new CompatibilityList();
+//
+//            GpuDelegate.Options delegateOptions = compatList.getBestOptionsForThisDevice();
+//            GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions);
+//            Interpreter.Options tfLiteOptions = new Interpreter.Options();
+//            tfLiteOptions.setNumThreads(numThreads);
 //            tfLiteOptions.setUseNNAPI(true);
-            tfLiteOptions.addDelegate(gpuDelegate);
-            MappedByteBuffer tfliteModel;
-            tfliteModel = loadModelFile();
-            tflite = new Interpreter(tfliteModel, tfLiteOptions);
+//            tfLiteOptions.addDelegate(gpuDelegate);
+//            MappedByteBuffer tfliteModel;
+//            tfliteModel = loadModelFile();
+            tflite = loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
         } catch (IOException e) {
             e.printStackTrace();
         }
 
 
         view.findViewById(R.id.picture).setOnClickListener(this);
-//        view.findViewById(R.id.info).setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
-//        mImageView = (ImageView) view.findViewById(R.id.imageView);
         mTextureViewAutoExp = view.findViewById(R.id.textViewAutoExp);
         mSeekBarShutterSpeed = view.findViewById(R.id.seekBarShutterSpeed);
         mSeekBarISO = view.findViewById(R.id.seekBarISO);
         mTextViewShutter = view.findViewById(R.id.textViewShutterSpeed);
         mTextViewISO = view.findViewById(R.id.textViewISO);
+        // Setup a new OrientationEventListener.  This is used to handle rotation events like a
+        // 180 degree rotation that do not normally trigger a call to onCreate to do view re-layout
+        // or otherwise cause the preview TextureView's size to change.
+        initOrientationEventListener();
+
+    }
+    void initOrientationEventListener(){
         // Setup a new OrientationEventListener.  This is used to handle rotation events like a
         // 180 degree rotation that do not normally trigger a call to onCreate to do view re-layout
         // or otherwise cause the preview TextureView's size to change.
@@ -1072,13 +890,19 @@ public class Camera2RawFragment extends Fragment
             mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
         }
     }
-
     @Override
     public void onResume() {
         super.onResume();
 //        startBackgroundThread();
         openCamera();
-
+        if (mTextureView.isAvailable()) {
+            configureTransform(mTextureView.getWidth(), mTextureView.getHeight());
+        } else {
+            mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
+        }
+        if (mOrientationListener != null && mOrientationListener.canDetectOrientation()) {
+            mOrientationListener.enable();
+        }
         Log.e("error", "onResume");
 
     }
@@ -1089,7 +913,7 @@ public class Camera2RawFragment extends Fragment
             mOrientationListener.disable();
         }
         closeCamera();
-        stopBackgroundThread();
+//        stopBackgroundThread();
         super.onPause();
     }
 
@@ -1200,14 +1024,25 @@ public class Camera2RawFragment extends Fragment
         CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
         try {
             // Wait for any previously running session to finish.
+            if (!mCameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
+                throw new RuntimeException("Time out waiting to lock camera opening.");
+            }
+
+            String cameraId;
+            Handler backgroundHandler;
+            synchronized (mCameraStateLock) {
+                cameraId = mCameraId;
+                backgroundHandler = mBackgroundHandler;
+            }
 
             // Attempt to open the camera. mStateCallback will be called on the background handler's
             // thread when this succeeds or fails.
-            manager.openCamera(mCameraId, mStateCallback, mBackgroundHandler);
+            manager.openCamera(cameraId, mStateCallback, backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Interrupted while trying to lock camera opening.", e);
         }
-
     }
 
     /**
@@ -1502,6 +1337,7 @@ public class Camera2RawFragment extends Fragment
 
                 captureBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                 captureBuilder.addTarget(mRawImageReader.get().getSurface());
+                captureBuilder.setTag(mRequestCounter.getAndIncrement());
                 captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
                 captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                 captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, mISO);
@@ -1518,7 +1354,13 @@ public class Camera2RawFragment extends Fragment
 //            for(int i =0; i<1; i++){
 //                listCaptureRequest.add(mCaptureRequest);
 //            }
+                ImageSaver.ImageSaverBuilder rawBuilder = new ImageSaver.ImageSaverBuilder(getActivity())
+                        .setCharacteristics(mCharacteristics);
+                mRawResultQueue.put((int) mCaptureRequest.getTag(), rawBuilder);
+
+
                 mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
+
 //            mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
 
 //            setSeekBarShutterSpeed();
@@ -1745,5 +1587,364 @@ public class Camera2RawFragment extends Fragment
     private static String generateTimestamp() {
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US);
         return sdf.format(new Date());
+    }
+
+    private static class ImageSaver implements Runnable {
+
+        /**
+         * The image to save.
+         */
+        private final Image mImage;
+        /**
+         * The file we save the image into.
+         */
+        private final File mFile;
+
+        /**
+         * The CaptureResult for this image capture.
+         */
+        private final CaptureResult mCaptureResult;
+
+        /**
+         * The CameraCharacteristics for this camera device.
+         */
+        private final CameraCharacteristics mCharacteristics;
+
+        /**
+         * The Context to use when updating MediaStore with the saved images.
+         */
+        private final Context mContext;
+
+        /**
+         * A reference counted wrapper for the ImageReader that owns the given image.
+         */
+        private final RefCountedAutoCloseable<ImageReader> mReader;
+
+        private  final Size mLargestSize;
+
+
+        private  final Interpreter tfliteModel;
+
+        private  final int mRate;
+        int Height = 1488;
+        int Width = 2000;
+        int Channel = 4;
+
+        float[] inputTensor = new float[1*Channel*Height*Width];
+        float[] outputTensor = new float[1*Channel*Height*Width];
+        private ImageSaver(Image image, File file, CaptureResult result,
+                           CameraCharacteristics characteristics, Context context,
+                           RefCountedAutoCloseable<ImageReader> reader, Size largestSize,
+                           Interpreter TFLiteModel, int mRatio) {
+            mImage = image;
+            mFile = file;
+            mCaptureResult = result;
+            mCharacteristics = characteristics;
+            mContext = context;
+            mReader = reader;
+            mLargestSize = largestSize;
+            tfliteModel = TFLiteModel;
+            mRate = mRatio;
+        }
+        @Override
+        public void run() {
+            boolean success = false;
+            int format = mImage.getFormat();
+            switch (format) {
+                case ImageFormat.RAW_SENSOR: {
+                    DngCreator dngCreator = new DngCreator(mCharacteristics, mCaptureResult);
+
+//                    FileOutputStream output = null;
+
+                    int rawHeight = mLargestSize.getHeight();
+                    int rawWidth = mLargestSize.getWidth();
+                    byte[] imageBytes = new byte[rawHeight*rawWidth*2];
+                    ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
+
+                    buffer.get(imageBytes);
+                    FileOutputStream outputStream = null;
+
+                    TensorBuffer input = TensorBuffer.createFixedSize(new int[] {1, Height, Width, Channel}, DataType.FLOAT32);
+                    TensorBuffer probabilityBuffer =
+                            TensorBuffer.createFixedSize(new int[]{1, Height,Width,Channel}, DataType.FLOAT32);
+
+                    for(int i=0; i<Height*2; i=i+2){
+                            for(int j=0; j<Width*2; j=j+2){
+
+//                Log.e("error", "aa is:"+aa);
+                                float g1 =  (float) ((imageBytes[(i*2* mLargestSize.getWidth())+(j*2)] & 0xFF) | ((imageBytes[(i*2*mLargestSize.getWidth())+(j*2)+1] & 0xFF) << 8));
+                                float b =  (float) ((imageBytes[(i*2*mLargestSize.getWidth())+((j+1)*2)] & 0xFF) | ((imageBytes[(i*2*mLargestSize.getWidth())+((j+1)*2)+1] & 0xFF) << 8));
+                                float r =  (float) ((imageBytes[((i+1)*2*mLargestSize.getWidth())+(j*2)] & 0xFF) | ((imageBytes[((i+1)*2*mLargestSize.getWidth())+(j*2)+1] & 0xFF) << 8));
+                                float g2 =  (float) ((imageBytes[((i+1)*2*mLargestSize.getWidth())+((j+1)*2)] & 0xFF) | ((imageBytes[((i+1)*2*mLargestSize.getWidth())+((j+1)*2)+1] & 0xFF) << 8));
+//                Log.e("error", "r is:"+r);
+                                g1 = mRate*(g1-64)/(1024-64);
+                                r = mRate*(r-64)/(1024-64);
+                                b = mRate*(b-64)/(1024-64);
+                                g2 = mRate*(g2-64)/(1024-64);
+
+                                g1 = (float) Math.pow(customReLU(g1), 1/2.22);
+                                r = (float) Math.pow(customReLU(r), 1/2.22);
+                                b = (float) Math.pow(customReLU(b), 1/2.22);
+                                g2 = (float) Math.pow(customReLU(g2),1/2.22);
+
+                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 0] = r;
+                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 1] = g1;
+                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 2] = b;
+                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 3] = g2;
+                            }
+                        }
+                input.loadArray(inputTensor);
+                ByteBuffer inpBuffer = input.getBuffer();
+                ByteBuffer outBuffer = probabilityBuffer.getBuffer();
+                long start = System.currentTimeMillis();
+                tfliteModel.run(inpBuffer, outBuffer);
+                long runTime = System.currentTimeMillis() - start;
+                outputTensor = probabilityBuffer.getFloatArray();
+
+                for (int i = 0; i < Height; i++) {
+                    for (int j = 0; j < Width; j++) {
+
+                        float r = outputTensor[i * Width * Channel + j * Channel + 0];
+                        float g1 = outputTensor[i * Width * Channel + j * Channel + 1];
+                        float b = outputTensor[i * Width * Channel + j * Channel + 2];
+                        float g2 = outputTensor[i * Width * Channel + j * Channel + 3];
+
+                        r = (float) Math.pow(customReLU(r), 2.22);
+                        g1 = (float) Math.pow(customReLU(g1), 2.22);
+                        b = (float) Math.pow(customReLU(b), 2.22);
+                        g2 = (float) Math.pow(customReLU(g2), 2.22);
+
+
+                        int tmpr = (int) (r * (1024 - 64) + 64);
+                        byte tmpr_0 = (byte) (tmpr & 0xFF);
+                        byte tmpr_1 = (byte) ((tmpr >> 8) & 0xFF);
+
+                        int tmpg1 = (int) (g1 * (1024 - 64) + 64);
+                        byte tmpg1_0 = (byte) (tmpg1 & 0xFF);
+                        byte tmpg1_1 = (byte) ((tmpg1 >> 8) & 0xFF);
+
+                        int tmpb = (int) (b * (1024 - 64) + 64);
+                        byte tmpb_0 = (byte) (tmpb & 0xFF);
+                        byte tmpb_1 = (byte) ((tmpb >> 8) & 0xFF);
+
+                        int tmpg2 = (int) (g2 * (1024 - 64) + 64);
+                        byte tmpg2_0 = (byte) (tmpg2 & 0xFF);
+                        byte tmpg2_1 = (byte) ((tmpg2 >> 8) & 0xFF);
+
+                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2) * 2 + 0] = tmpg1_0;
+                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2) * 2 + 1] = tmpg1_1;
+
+
+                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2 + 1) * 2 + 0] = tmpb_0;
+                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2 + 1) * 2 + 1] = tmpb_1;
+    //
+                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2) * 2 + 0] = tmpr_0;
+                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2) * 2 + 1] = tmpr_1;
+    //
+                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2 + 1) * 2 + 0] = tmpg2_0;
+                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2 + 1) * 2 + 1] = tmpg2_1;
+                    }
+                }
+
+                    InputStream targetStream = new ByteArrayInputStream(imageBytes);
+                    try {
+//                        output = new FileOutputStream(mFile);
+                        outputStream = new FileOutputStream(mFile);
+                        dngCreator.writeInputStream(outputStream, mLargestSize, targetStream, 0);
+//                        dngCreator.writeImage(output, mImage);
+                        success = true;
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    } finally {
+                        mImage.close();
+                        closeOutput(outputStream);
+                    }
+                    break;
+                }
+                default: {
+                    Log.e(TAG, "Cannot save image, unexpected image format:" + format);
+                    break;
+                }
+            }
+
+            // Decrement reference count to allow ImageReader to be closed to free up resources.
+            mReader.close();
+
+            // If saving the file succeeded, update MediaStore.
+            if (success) {
+                MediaScannerConnection.scanFile(mContext, new String[]{mFile.getPath()},
+                        /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
+                            @Override
+                            public void onMediaScannerConnected() {
+                                // Do nothing
+                            }
+
+                            @Override
+                            public void onScanCompleted(String path, Uri uri) {
+                                Log.i(TAG, "Scanned " + path + ":");
+                                Log.i(TAG, "-> uri=" + uri);
+                            }
+                        });
+            }
+        }
+
+        public float customReLU(float input){
+            if(input<0)
+                input=0;
+            if (input>1)
+                input=1;
+            return input;
+        }
+
+        /**
+         * Builder class for constructing {@link ImageSaver}s.
+         * <p/>
+         * This class is thread safe.
+         */
+        public static class ImageSaverBuilder {
+            private Image mImage;
+            private File mFile;
+            private CaptureResult mCaptureResult;
+            private CameraCharacteristics mCharacteristics;
+            private Context mContext;
+            private RefCountedAutoCloseable<ImageReader> mReader;
+            private  Size mLargestSize;
+            private Interpreter tfliteModel;
+            private int mRate;
+            /**
+             * Construct a new ImageSaverBuilder using the given {@link Context}.
+             *
+             * @param context a {@link Context} to for accessing the
+             *                {@link android.provider.MediaStore}.
+             */
+            public ImageSaverBuilder(final Context context) {
+                mContext = context;
+            }
+
+            public synchronized ImageSaverBuilder setRefCountedReader(
+                    RefCountedAutoCloseable<ImageReader> reader) {
+                if (reader == null) throw new NullPointerException();
+
+                mReader = reader;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setImage(final Image image) {
+                if (image == null) throw new NullPointerException();
+                mImage = image;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setFile(final File file) {
+                if (file == null) throw new NullPointerException();
+                mFile = file;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setResult(final CaptureResult result) {
+                if (result == null) throw new NullPointerException();
+                mCaptureResult = result;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setCharacteristics(
+                    final CameraCharacteristics characteristics) {
+                if (characteristics == null) throw new NullPointerException();
+                mCharacteristics = characteristics;
+                return this;
+            }
+            public synchronized ImageSaverBuilder setLargetSize(
+                    final Size largestSize) {
+                if (largestSize == null) throw new NullPointerException();
+                mLargestSize = largestSize;
+                return this;
+            }
+
+            public  synchronized ImageSaverBuilder setTFLiteModel(
+                final Interpreter TFLiteModel){
+                if (TFLiteModel==null) throw new NullPointerException();
+                Log.e("error", "set TFModel");
+                tfliteModel = TFLiteModel;
+                return this;
+            }
+
+            public  synchronized ImageSaverBuilder setRate(
+                    final int mRatio){
+                if (mRatio == 0) throw  new NullPointerException();
+                mRate=mRatio;
+                return this;
+            }
+            public synchronized ImageSaver buildIfComplete() {
+                if (!isComplete()) {
+                    return null;
+                }
+                return new ImageSaver(mImage, mFile, mCaptureResult, mCharacteristics, mContext,
+                        mReader, mLargestSize, tfliteModel, mRate);
+            }
+
+            public synchronized String getSaveLocation() {
+                return (mFile == null) ? "Unknown" : mFile.toString();
+            }
+
+            private boolean isComplete() {
+                return mImage != null && mFile != null && mCaptureResult != null
+                        && mCharacteristics != null;
+            }
+        }
+    }
+    private static void closeOutput(OutputStream outputStream) {
+        if (null != outputStream) {
+            try {
+                outputStream.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    private void handleCompletionLocked(int requestId, ImageSaver.ImageSaverBuilder builder,
+                                        TreeMap<Integer, ImageSaver.ImageSaverBuilder> queue) {
+        if (builder == null) return;
+        ImageSaver saver = builder.buildIfComplete();
+        if (saver != null) {
+            queue.remove(requestId);
+            AsyncTask.THREAD_POOL_EXECUTOR.execute(saver);
+        }
+    }
+
+    private void dequeueAndSaveImage(TreeMap<Integer, ImageSaver.ImageSaverBuilder> pendingQueue,
+                                     RefCountedAutoCloseable<ImageReader> reader) {
+        synchronized (mCameraStateLock) {
+            Map.Entry<Integer, ImageSaver.ImageSaverBuilder> entry =
+                    pendingQueue.firstEntry();
+            ImageSaver.ImageSaverBuilder builder = entry.getValue();
+
+            // Increment reference count to prevent ImageReader from being closed while we
+            // are saving its Images in a background thread (otherwise their resources may
+            // be freed while we are writing to a file).
+            if (reader == null || reader.getAndRetain() == null) {
+                Log.e(TAG, "Paused the activity before we could save the image," +
+                        " ImageReader already closed.");
+                pendingQueue.remove(entry.getKey());
+                return;
+            }
+
+            Image image;
+            try {
+                image = reader.get().acquireNextImage();
+
+
+
+
+            } catch (IllegalStateException e) {
+                Log.e(TAG, "Too many images queued for saving, dropping image for request: " +
+                        entry.getKey());
+                pendingQueue.remove(entry.getKey());
+                return;
+            }
+
+            builder.setRefCountedReader(reader).setImage(image);
+
+            handleCompletionLocked(entry.getKey(), builder, pendingQueue);
+        }
     }
 }
