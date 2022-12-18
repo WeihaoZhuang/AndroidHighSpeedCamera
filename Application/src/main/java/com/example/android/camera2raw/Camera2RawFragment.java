@@ -323,11 +323,9 @@ public class Camera2RawFragment extends Fragment
      * Timer to use with pre-capture sequence to ensure a timely capture if 3A convergence is
      * taking too long.
      */
-    private long mCaptureTimer;
 
     //**********************************************************************************************
     private final TreeMap<Integer, ImageSaver.ImageSaverBuilder> mRawResultQueue = new TreeMap<>();
-    private ImageReader mImageReader;
     long toUS = 1000000000;
     int mISO;
     long mShutterSpeed;
@@ -338,41 +336,18 @@ public class Camera2RawFragment extends Fragment
     long gtExposure;
     int gtIso;
     private Size largestRaw;
-    private Image mImage;
-    byte[] imageBytes;// = new byte[3000*4000*2];
-//    float[] outputArray = new float[3000*4000]; //1500,2000,4
-//    byte[] outputArray2 = new byte[Height*Width*4]; //1500,2000,4
 
 
-    float[] inputTensor = new float[1*Channel*Height*Width];
-    float[] outputTensor = new float[1*Channel*Height*Width];
-
-    int pend=0;
-    List<ByteBuffer> listBuffer = new ArrayList<>();
-
-//    Bitmap randomBitmap = Bitmap.createBitmap(Width,Height,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
-    ImageView mImageView;
 
     SeekBar mSeekBarShutterSpeed;
     SeekBar mSeekBarISO;
     TextView mTextViewShutter;
     TextView mTextViewISO;
     TextView mTextureViewAutoExp;
-//    long maxShutterSpeed;
 
-    //TFlite
-    TensorBuffer input = TensorBuffer.createFixedSize(new int[] {1, Height, Width, Channel}, DataType.FLOAT32);
-//    TensorImage input = new TensorImage(DataType.FLOAT32);
-//    TensorImage output = new TensorImage(DataType.FLOAT32);
-    TensorBuffer probabilityBuffer =
-            TensorBuffer.createFixedSize(new int[]{1, Height,Width,Channel}, DataType.FLOAT32);
-    Interpreter tflite;// = new Interpreter(tfliteModel);
-//    int[] inpShape = {1,Height,Width,Channel};
-
-
-
+    DenoisingModel denoising;
 
 
     //**********************************************************************************************
@@ -523,15 +498,6 @@ public class Camera2RawFragment extends Fragment
                 mTextViewShutter.setText("1/"+s2);
                 mRatio = (int) ((float)(gtIso*gtExposure)/((float) (mISO*mShutterSpeed)));
                 mRatio = Math.max(1, mRatio);
-//                Log.e("error", "seekbarx"+progress+"ss:"+s2);
-//
-//                captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterSpeed);
-//                mCaptureRequest = captureBuilder.build();
-//                try {
-//                    mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-//                } catch (CameraAccessException e) {
-//                    e.printStackTrace();
-//                }
 
             }
             @Override
@@ -547,78 +513,6 @@ public class Camera2RawFragment extends Fragment
 
 
 
-    }
-
-    public float customReLU(float input){
-        if(input<0)
-            input=0;
-        if (input>1)
-            input=1;
-        return input;
-    }
-    public void rawToVisualBitmap(){
-        Log.e("error", "raw To vi imageBytes:"+imageBytes[0]+" "+imageBytes[1]);
-        for(int i=0; i<Height*2; i=i+2){
-            for(int j=0; j<Width*2; j=j+2){
-
-//                Log.e("error", "aa is:"+aa);
-                float g1 =  (float) ((imageBytes[(i*2* largestRaw.getWidth())+(j*2)] & 0xFF) | ((imageBytes[(i*2*largestRaw.getWidth())+(j*2)+1] & 0xFF) << 8));
-                float b =  (float) ((imageBytes[(i*2*largestRaw.getWidth())+((j+1)*2)] & 0xFF) | ((imageBytes[(i*2*largestRaw.getWidth())+((j+1)*2)+1] & 0xFF) << 8));
-                float r =  (float) ((imageBytes[((i+1)*2*largestRaw.getWidth())+(j*2)] & 0xFF) | ((imageBytes[((i+1)*2*largestRaw.getWidth())+(j*2)+1] & 0xFF) << 8));
-                float g2 =  (float) ((imageBytes[((i+1)*2*largestRaw.getWidth())+((j+1)*2)] & 0xFF) | ((imageBytes[((i+1)*2*largestRaw.getWidth())+((j+1)*2)+1] & 0xFF) << 8));
-//                Log.e("error", "r is:"+r);
-                g1 = mRatio*(g1-64)/(1024-64);
-                r = mRatio*(r-64)/(1024-64);
-                b = mRatio*(b-64)/(1024-64);
-                g2 = mRatio*(g2-64)/(1024-64);
-
-                g1 = (float) Math.pow(customReLU(g1), 1/2.22);
-                r = (float) Math.pow(customReLU(r), 1/2.22);
-                b = (float) Math.pow(customReLU(b), 1/2.22);
-                g2 = (float) Math.pow(customReLU(g2),1/2.22);
-
-//                g1 = customReLU(g1);
-//                r = customReLU(r);
-//                b = customReLU(b);
-//                g2 = customReLU(g2);
-                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 0] = r;
-                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 1] = g1;
-                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 2] = b;
-                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 3] = g2;
-            }
-        }
-
-
-        //uint16 to float32
-//        for (int i=0; i<imageBytes.length/2; i++){
-//            float out =  (float) ((imageBytes[i*2] & 0xFF) | ((imageBytes[i*2+1] & 0xFF) << 8));
-//            out = ((float)mRatio)*(out-64)/(1024-64);
-//            if (out<0)
-//                out=0;
-//            else if (out>1)
-//                out=1;
-//            out = (float) Math.pow(out,1/2.22);
-//            outputArray[i]=((out));
-//        }
-//
-//        //
-//        for (int i=0; i< 3000; i=i+2){
-//            if ((i/2) >= Height) continue;
-//
-//            for (int j=0; j<4000; j=j+2) {
-//                if ((j/2) >= Width) continue;
-//
-//                float g1 = (outputArray[i * 4000 + j]);
-//                float r =  (outputArray[(i+1) * 4000 + j]);
-//                float b =  (outputArray[i * 4000 + j+1]);
-//                float g2 = (outputArray[(i+1) * 4000 + j+1]);
-//
-//                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 0] = r;
-//                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 1] = g1;
-//                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 2] = b;
-//                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 3] = g2;
-//            }
-//        }
     }
 
     private final CameraCaptureSession.CaptureCallback mPreviewCallback
@@ -637,7 +531,6 @@ public class Camera2RawFragment extends Fragment
             mRatio = (int) ((float)(gtIso*gtExposure)/((float) (mISO*mShutterSpeed)));
             mRatio = Math.max(1, mRatio);
             mTextureViewAutoExp.setText("GtISO:"+gtIso+" GtFre:"+ frequency+" ratio:"+mRatio);
-//            Log.e("error", "preview ISO: "+iso+" shutter:"+frequency);
         }
 
         @Override
@@ -663,117 +556,29 @@ public class Camera2RawFragment extends Fragment
             int requestId = (int) request.getTag();
             ImageSaver.ImageSaverBuilder rawBuilder;
             StringBuilder sb = new StringBuilder();
+            String timeName = generateTimestamp();
             File rawFile = new File(Environment.
                         getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-                        "RAW_" + generateTimestamp() + ".dng");
+                        "RAW_" +  timeName+ ".dng");
+            File rawFileOri = new File(Environment.
+                    getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                    "RAW_" + timeName + "_ori_.dng");
             synchronized (mCameraStateLock) {
 
                 rawBuilder = mRawResultQueue.get(requestId);
                 if (rawBuilder != null) {
                     rawBuilder.setFile(rawFile);
+                    rawBuilder.setFileOri(rawFileOri);
                     rawBuilder.setResult(result);
                     rawBuilder.setLargetSize(largestRaw);
-                    rawBuilder.setTFLiteModel(tflite);
+                    rawBuilder.setDenoisingModel(denoising);
+
                     rawBuilder.setRate(mRatio);
                     sb.append("Saving RAW as: ");
                     sb.append(rawBuilder.getSaveLocation());
                 }
                 handleCompletionLocked(requestId, rawBuilder, mRawResultQueue);
 
-
-//                Log.e("error", "exp:" + result.get(CaptureResult.SENSOR_SENSITIVITY));
-//                rawToVisualBitmap();
-//                input.loadArray(inputTensor);
-//
-//
-//                ByteBuffer inpBuffer = input.getBuffer();
-//                ByteBuffer outBuffer = probabilityBuffer.getBuffer();
-//                long start = System.currentTimeMillis();
-//                tflite.run(inpBuffer, outBuffer);
-//                long runTime = System.currentTimeMillis() - start;
-//                Log.e("error", "Model runTime:" + runTime);
-//                outputTensor = probabilityBuffer.getFloatArray();
-//
-//                for (int i = 0; i < Height; i++) {
-//                    for (int j = 0; j < Width; j++) {
-//
-//                        float r = outputTensor[i * Width * Channel + j * Channel + 0];
-//                        float g1 = outputTensor[i * Width * Channel + j * Channel + 1];
-//                        float b = outputTensor[i * Width * Channel + j * Channel + 2];
-//                        float g2 = outputTensor[i * Width * Channel + j * Channel + 3];
-//
-//                        r = (float) Math.pow(customReLU(r), 2.22);
-//                        g1 = (float) Math.pow(customReLU(g1), 2.22);
-//                        b = (float) Math.pow(customReLU(b), 2.22);
-//                        g2 = (float) Math.pow(customReLU(g2), 2.22);
-//
-//
-//                        int tmpr = (int) (r * (1024 - 64) + 64);
-//                        byte tmpr_0 = (byte) (tmpr & 0xFF);
-//                        byte tmpr_1 = (byte) ((tmpr >> 8) & 0xFF);
-//
-//                        int tmpg1 = (int) (g1 * (1024 - 64) + 64);
-//                        byte tmpg1_0 = (byte) (tmpg1 & 0xFF);
-//                        byte tmpg1_1 = (byte) ((tmpg1 >> 8) & 0xFF);
-//
-//                        int tmpb = (int) (b * (1024 - 64) + 64);
-//                        byte tmpb_0 = (byte) (tmpb & 0xFF);
-//                        byte tmpb_1 = (byte) ((tmpb >> 8) & 0xFF);
-//
-//                        int tmpg2 = (int) (g2 * (1024 - 64) + 64);
-//                        byte tmpg2_0 = (byte) (tmpg2 & 0xFF);
-//                        byte tmpg2_1 = (byte) ((tmpg2 >> 8) & 0xFF);
-//
-//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2) * 2 + 0] = tmpg1_0;
-//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2) * 2 + 1] = tmpg1_1;
-//
-//
-//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2 + 1) * 2 + 0] = tmpb_0;
-//                        imageBytes[(i * 2) * 4000 * 2 + (j * 2 + 1) * 2 + 1] = tmpb_1;
-////
-//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2) * 2 + 0] = tmpr_0;
-//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2) * 2 + 1] = tmpr_1;
-////
-//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2 + 1) * 2 + 0] = tmpg2_0;
-//                        imageBytes[(i * 2 + 1) * 4000 * 2 + (j * 2 + 1) * 2 + 1] = tmpg2_1;
-//
-//
-////                    }
-//                    }
-//                }
-//
-//                InputStream targetStream = new ByteArrayInputStream(imageBytes);
-//                File rawFile = new File(Environment.
-//                        getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-//                        "RAW_" + generateTimestamp() + ".dng");
-//                Rect mRect = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE);
-//
-//                DngCreator dngCreator = new DngCreator(mCharacteristics, result);
-//                FileOutputStream output = null;
-//
-//                try {
-//                    output = new FileOutputStream(rawFile);
-//                    dngCreator.writeInputStream(output, largestRaw, targetStream, 0);
-//                } catch (IOException e) {
-//                    e.printStackTrace();
-//                }
-//
-//
-//                MediaScannerConnection.scanFile(getContext(), new String[]{rawFile.getPath()},
-//                        /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
-//                            @Override
-//                            public void onMediaScannerConnected() {
-//                                // Do nothing
-//                            }
-//
-//                            @Override
-//                            public void onScanCompleted(String path, Uri uri) {
-//                                Log.i(TAG, "Scanned " + path + ":");
-//                                Log.i(TAG, "-> uri=" + uri);
-//                            }
-//                        });
-//
-//                Log.e("error", "Finished ever");
 
             }
         }
@@ -815,44 +620,14 @@ public class Camera2RawFragment extends Fragment
 
         return v;
     }
-    private Interpreter loadModelFile() throws IOException {
-        AssetFileDescriptor fileDescriptor= getResources().getAssets().openFd("model_float32.tflite");
-        FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
-        FileChannel fileChannel=inputStream.getChannel();
-        long startOffset=fileDescriptor.getStartOffset();
-        long declareLength=fileDescriptor.getDeclaredLength();
 
-        int numThreads = 4;
-        CompatibilityList compatList = new CompatibilityList();
-
-        GpuDelegate.Options delegateOptions = compatList.getBestOptionsForThisDevice();
-        GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions);
-        Interpreter.Options tfLiteOptions = new Interpreter.Options();
-        tfLiteOptions.setNumThreads(numThreads);
-        tfLiteOptions.setUseNNAPI(true);
-        tfLiteOptions.addDelegate(gpuDelegate);
-        MappedByteBuffer tfliteModel;
-        tfliteModel = fileChannel.map(FileChannel.MapMode.READ_ONLY,startOffset,declareLength);
-        Interpreter tflite = new Interpreter(tfliteModel, tfLiteOptions);
-        return tflite;
-    }
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         Log.e("error", "onViewCreated2");
 
         try {
-//            int numThreads = 4;
-//            CompatibilityList compatList = new CompatibilityList();
-//
-//            GpuDelegate.Options delegateOptions = compatList.getBestOptionsForThisDevice();
-//            GpuDelegate gpuDelegate = new GpuDelegate(delegateOptions);
-//            Interpreter.Options tfLiteOptions = new Interpreter.Options();
-//            tfLiteOptions.setNumThreads(numThreads);
-//            tfLiteOptions.setUseNNAPI(true);
-//            tfLiteOptions.addDelegate(gpuDelegate);
-//            MappedByteBuffer tfliteModel;
-//            tfliteModel = loadModelFile();
-            tflite = loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
+            denoising = new DenoisingModel(getContext());
+            denoising.loadModelFile("model_float32.tflite", 4);//loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -977,7 +752,7 @@ public class Camera2RawFragment extends Fragment
                         Arrays.asList(map.getOutputSizes(ImageFormat.RAW_SENSOR)),
                         new CompareSizesByArea());
 
-                imageBytes = new byte[largestRaw.getHeight()*largestRaw.getWidth()*2];
+//                imageBytes = new byte[largestRaw.getHeight()*largestRaw.getWidth()*2];
                 synchronized (mCameraStateLock) {
                     // Set up ImageReaders for JPEG and RAW outputs.  Place these in a reference
                     // counted wrapper to ensure they are only closed when all background tasks
@@ -1015,6 +790,7 @@ public class Camera2RawFragment extends Fragment
         if (!setUpCameraOutputs()) {
             return;
         }
+
         if (!hasAllPermissionsGranted()) {
             requestCameraPermissions();
             return;
@@ -1186,12 +962,9 @@ public class Camera2RawFragment extends Fragment
                                 }
                                 try {
 
-//                                    setup3AControlsLocked(mPreviewRequestBuilder);
-                                    // Finally, we start displaying the camera preview.
                                     cameraCaptureSession.setRepeatingRequest(
                                             mPreviewRequestBuilder.build(),
                                             mPreviewCallback, mBackgroundHandler);
-//                                    mState = STATE_PREVIEW;
                                 } catch (CameraAccessException | IllegalStateException e) {
                                     e.printStackTrace();
                                     return;
@@ -1329,12 +1102,7 @@ public class Camera2RawFragment extends Fragment
     private void captureStillPictureLocked() {
         Log.e("error", "captureStillPictureLocked");
         synchronized (mCameraStateLock) {
-//        mState = STATE_WAITING_FOR_3A_CONVERGENCE;
             try {
-
-                // This is the CaptureRequest.Builder that we use to take a picture.
-//            final CaptureRequest.Builder captureBuilder =
-
                 captureBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                 captureBuilder.addTarget(mRawImageReader.get().getSurface());
                 captureBuilder.setTag(mRequestCounter.getAndIncrement());
@@ -1342,29 +1110,14 @@ public class Camera2RawFragment extends Fragment
                 captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                 captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, mISO);
                 captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mShutterSpeed);//(long)(0.02 *1000000000));
-                // Use the same AE and AF modes as the preview.
-//            setup3AControlsLocked(captureBuilder);
-                // Set request tag to easily track results in callbacks.
-//            captureBuilder.setTag(mRequestCounter.getAndIncrement());
-//            mCaptureSession.setRepeatingRequest(captureBuilder.build(), mCaptureCallback, mBackgroundHandler);
+
                 mCaptureRequest = captureBuilder.build();
 
-
-//            List<CaptureRequest> listCaptureRequest = new ArrayList<>();
-//            for(int i =0; i<1; i++){
-//                listCaptureRequest.add(mCaptureRequest);
-//            }
                 ImageSaver.ImageSaverBuilder rawBuilder = new ImageSaver.ImageSaverBuilder(getActivity())
                         .setCharacteristics(mCharacteristics);
                 mRawResultQueue.put((int) mCaptureRequest.getTag(), rawBuilder);
-
-
                 mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
 
-//            mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-
-//            setSeekBarShutterSpeed();
-//            setSeekBarISO();
             } catch (CameraAccessException e) {
                 e.printStackTrace();
             }
@@ -1620,31 +1373,29 @@ public class Camera2RawFragment extends Fragment
          */
         private final RefCountedAutoCloseable<ImageReader> mReader;
 
-        private  final Size mLargestSize;
+        private final Size mLargestSize;
 
-
-        private  final Interpreter tfliteModel;
+        private final DenoisingModel tfLiteModel;
 
         private  final int mRate;
-        int Height = 1488;
-        int Width = 2000;
-        int Channel = 4;
 
-        float[] inputTensor = new float[1*Channel*Height*Width];
-        float[] outputTensor = new float[1*Channel*Height*Width];
-        private ImageSaver(Image image, File file, CaptureResult result,
+        private final File mFileOri;
+
+        private ImageSaver(Image image, File file, File fileOri, CaptureResult result,
                            CameraCharacteristics characteristics, Context context,
                            RefCountedAutoCloseable<ImageReader> reader, Size largestSize,
-                           Interpreter TFLiteModel, int mRatio) {
+                            int mRatio, DenoisingModel denoisingModel) {
             mImage = image;
             mFile = file;
+            mFileOri = fileOri;
             mCaptureResult = result;
             mCharacteristics = characteristics;
             mContext = context;
             mReader = reader;
             mLargestSize = largestSize;
-            tfliteModel = TFLiteModel;
+
             mRate = mRatio;
+            tfLiteModel = denoisingModel;
         }
         @Override
         public void run() {
@@ -1654,104 +1405,18 @@ public class Camera2RawFragment extends Fragment
                 case ImageFormat.RAW_SENSOR: {
                     DngCreator dngCreator = new DngCreator(mCharacteristics, mCaptureResult);
 
-//                    FileOutputStream output = null;
-
-                    int rawHeight = mLargestSize.getHeight();
-                    int rawWidth = mLargestSize.getWidth();
-                    byte[] imageBytes = new byte[rawHeight*rawWidth*2];
-                    ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-
-                    buffer.get(imageBytes);
+                    FileOutputStream output = null;
                     FileOutputStream outputStream = null;
 
-                    TensorBuffer input = TensorBuffer.createFixedSize(new int[] {1, Height, Width, Channel}, DataType.FLOAT32);
-                    TensorBuffer probabilityBuffer =
-                            TensorBuffer.createFixedSize(new int[]{1, Height,Width,Channel}, DataType.FLOAT32);
+                    tfLiteModel.initBytesArray(mLargestSize);
+                    tfLiteModel.initTensor(mImage, mRate);
 
-                    for(int i=0; i<Height*2; i=i+2){
-                            for(int j=0; j<Width*2; j=j+2){
-
-//                Log.e("error", "aa is:"+aa);
-                                float g1 =  (float) ((imageBytes[(i*2* mLargestSize.getWidth())+(j*2)] & 0xFF) | ((imageBytes[(i*2*mLargestSize.getWidth())+(j*2)+1] & 0xFF) << 8));
-                                float b =  (float) ((imageBytes[(i*2*mLargestSize.getWidth())+((j+1)*2)] & 0xFF) | ((imageBytes[(i*2*mLargestSize.getWidth())+((j+1)*2)+1] & 0xFF) << 8));
-                                float r =  (float) ((imageBytes[((i+1)*2*mLargestSize.getWidth())+(j*2)] & 0xFF) | ((imageBytes[((i+1)*2*mLargestSize.getWidth())+(j*2)+1] & 0xFF) << 8));
-                                float g2 =  (float) ((imageBytes[((i+1)*2*mLargestSize.getWidth())+((j+1)*2)] & 0xFF) | ((imageBytes[((i+1)*2*mLargestSize.getWidth())+((j+1)*2)+1] & 0xFF) << 8));
-//                Log.e("error", "r is:"+r);
-                                g1 = mRate*(g1-64)/(1024-64);
-                                r = mRate*(r-64)/(1024-64);
-                                b = mRate*(b-64)/(1024-64);
-                                g2 = mRate*(g2-64)/(1024-64);
-
-                                g1 = (float) Math.pow(customReLU(g1), 1/2.22);
-                                r = (float) Math.pow(customReLU(r), 1/2.22);
-                                b = (float) Math.pow(customReLU(b), 1/2.22);
-                                g2 = (float) Math.pow(customReLU(g2),1/2.22);
-
-                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 0] = r;
-                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 1] = g1;
-                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 2] = b;
-                                inputTensor[(i/2)*Width*Channel+(j/2)*Channel + 3] = g2;
-                            }
-                        }
-                input.loadArray(inputTensor);
-                ByteBuffer inpBuffer = input.getBuffer();
-                ByteBuffer outBuffer = probabilityBuffer.getBuffer();
-                long start = System.currentTimeMillis();
-                tfliteModel.run(inpBuffer, outBuffer);
-                long runTime = System.currentTimeMillis() - start;
-                outputTensor = probabilityBuffer.getFloatArray();
-
-                for (int i = 0; i < Height; i++) {
-                    for (int j = 0; j < Width; j++) {
-
-                        float r = outputTensor[i * Width * Channel + j * Channel + 0];
-                        float g1 = outputTensor[i * Width * Channel + j * Channel + 1];
-                        float b = outputTensor[i * Width * Channel + j * Channel + 2];
-                        float g2 = outputTensor[i * Width * Channel + j * Channel + 3];
-
-                        r = (float) Math.pow(customReLU(r), 2.22);
-                        g1 = (float) Math.pow(customReLU(g1), 2.22);
-                        b = (float) Math.pow(customReLU(b), 2.22);
-                        g2 = (float) Math.pow(customReLU(g2), 2.22);
-
-
-                        int tmpr = (int) (r * (1024 - 64) + 64);
-                        byte tmpr_0 = (byte) (tmpr & 0xFF);
-                        byte tmpr_1 = (byte) ((tmpr >> 8) & 0xFF);
-
-                        int tmpg1 = (int) (g1 * (1024 - 64) + 64);
-                        byte tmpg1_0 = (byte) (tmpg1 & 0xFF);
-                        byte tmpg1_1 = (byte) ((tmpg1 >> 8) & 0xFF);
-
-                        int tmpb = (int) (b * (1024 - 64) + 64);
-                        byte tmpb_0 = (byte) (tmpb & 0xFF);
-                        byte tmpb_1 = (byte) ((tmpb >> 8) & 0xFF);
-
-                        int tmpg2 = (int) (g2 * (1024 - 64) + 64);
-                        byte tmpg2_0 = (byte) (tmpg2 & 0xFF);
-                        byte tmpg2_1 = (byte) ((tmpg2 >> 8) & 0xFF);
-
-                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2) * 2 + 0] = tmpg1_0;
-                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2) * 2 + 1] = tmpg1_1;
-
-
-                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2 + 1) * 2 + 0] = tmpb_0;
-                        imageBytes[(i * 2) * rawWidth * 2 + (j * 2 + 1) * 2 + 1] = tmpb_1;
-    //
-                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2) * 2 + 0] = tmpr_0;
-                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2) * 2 + 1] = tmpr_1;
-    //
-                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2 + 1) * 2 + 0] = tmpg2_0;
-                        imageBytes[(i * 2 + 1) * rawWidth * 2 + (j * 2 + 1) * 2 + 1] = tmpg2_1;
-                    }
-                }
-
-                    InputStream targetStream = new ByteArrayInputStream(imageBytes);
+                    InputStream targetStream = new ByteArrayInputStream(tfLiteModel.getOuputBytesArray());
                     try {
-//                        output = new FileOutputStream(mFile);
+                        output = new FileOutputStream(mFileOri);
                         outputStream = new FileOutputStream(mFile);
+                        dngCreator.writeImage(output, mImage);
                         dngCreator.writeInputStream(outputStream, mLargestSize, targetStream, 0);
-//                        dngCreator.writeImage(output, mImage);
                         success = true;
                     } catch (IOException e) {
                         e.printStackTrace();
@@ -1772,29 +1437,22 @@ public class Camera2RawFragment extends Fragment
 
             // If saving the file succeeded, update MediaStore.
             if (success) {
-                MediaScannerConnection.scanFile(mContext, new String[]{mFile.getPath()},
+                MediaScannerConnection.scanFile(mContext, new String[]{mFile.getPath(), mFileOri.getPath()},
                         /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
                             @Override
                             public void onMediaScannerConnected() {
                                 // Do nothing
                             }
-
                             @Override
                             public void onScanCompleted(String path, Uri uri) {
                                 Log.i(TAG, "Scanned " + path + ":");
                                 Log.i(TAG, "-> uri=" + uri);
                             }
                         });
+
             }
         }
 
-        public float customReLU(float input){
-            if(input<0)
-                input=0;
-            if (input>1)
-                input=1;
-            return input;
-        }
 
         /**
          * Builder class for constructing {@link ImageSaver}s.
@@ -1804,13 +1462,14 @@ public class Camera2RawFragment extends Fragment
         public static class ImageSaverBuilder {
             private Image mImage;
             private File mFile;
+            private File mFileOri;
             private CaptureResult mCaptureResult;
             private CameraCharacteristics mCharacteristics;
             private Context mContext;
             private RefCountedAutoCloseable<ImageReader> mReader;
             private  Size mLargestSize;
-            private Interpreter tfliteModel;
             private int mRate;
+            private DenoisingModel tfLiteModel;
             /**
              * Construct a new ImageSaverBuilder using the given {@link Context}.
              *
@@ -1840,7 +1499,11 @@ public class Camera2RawFragment extends Fragment
                 mFile = file;
                 return this;
             }
-
+            public synchronized ImageSaverBuilder setFileOri(final File fileOri) {
+                if (fileOri == null) throw new NullPointerException();
+                mFileOri = fileOri;
+                return this;
+            }
             public synchronized ImageSaverBuilder setResult(final CaptureResult result) {
                 if (result == null) throw new NullPointerException();
                 mCaptureResult = result;
@@ -1860,13 +1523,6 @@ public class Camera2RawFragment extends Fragment
                 return this;
             }
 
-            public  synchronized ImageSaverBuilder setTFLiteModel(
-                final Interpreter TFLiteModel){
-                if (TFLiteModel==null) throw new NullPointerException();
-                Log.e("error", "set TFModel");
-                tfliteModel = TFLiteModel;
-                return this;
-            }
 
             public  synchronized ImageSaverBuilder setRate(
                     final int mRatio){
@@ -1874,12 +1530,19 @@ public class Camera2RawFragment extends Fragment
                 mRate=mRatio;
                 return this;
             }
+            public synchronized ImageSaverBuilder setDenoisingModel(
+                    final DenoisingModel denoisingModel){
+                if (denoisingModel == null) throw  new NullPointerException();
+                tfLiteModel = denoisingModel;
+                return this;
+            }
+
             public synchronized ImageSaver buildIfComplete() {
                 if (!isComplete()) {
                     return null;
                 }
-                return new ImageSaver(mImage, mFile, mCaptureResult, mCharacteristics, mContext,
-                        mReader, mLargestSize, tfliteModel, mRate);
+                return new ImageSaver(mImage, mFile, mFileOri, mCaptureResult, mCharacteristics, mContext,
+                        mReader, mLargestSize, mRate, tfLiteModel);
             }
 
             public synchronized String getSaveLocation() {
