@@ -14,9 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2raw;
-
-import static org.tensorflow.lite.support.common.FileUtil.*;
+package com.example.android.anroidHSSP;
 
 import android.Manifest;
 import android.app.Activity;
@@ -27,9 +25,6 @@ import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
-import android.content.res.AssetFileDescriptor;
-import android.content.res.AssetManager;
-import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Point;
@@ -44,6 +39,7 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureFailure;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.DngCreator;
 import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
@@ -52,61 +48,47 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
-import android.os.SystemClock;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
-import android.text.method.KeyListener;
 import android.util.Log;
-import android.util.Range;
 import android.util.Size;
 import android.util.SparseIntArray;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.OrientationEventListener;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import junit.framework.Assert;
+import com.example.android.androidHSSP.R;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.tensorflow.lite.DataType;
-import org.tensorflow.lite.Interpreter;
-import org.tensorflow.lite.Tensor;
-import org.tensorflow.lite.support.common.FileUtil;
-import org.tensorflow.lite.support.image.TensorImage;
-import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
-import org.tensorflow.lite.task.core.BaseOptions;
 
 public class Camera2RawFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -316,36 +298,59 @@ public class Camera2RawFragment extends Fragment
      * Timer to use with pre-capture sequence to ensure a timely capture if 3A convergence is
      * taking too long.
      */
-    private long mCaptureTimer;
 
     //**********************************************************************************************
+    private final TreeMap<Integer, ImageSaver.ImageSaverBuilder> mRawResultQueue = new TreeMap<>();
+    long toUS = 1000000000;
+    int mISO;
+    long mShutterSpeed;
+    int mRatio=1;
+    long gtExposure;
+    int gtIso;
+    private Size largestRaw;
+    String[] bayerPatterns = {"RGGB", "GRBG", "GBRG","BGGR"};
+    String bayerPattern;
 
-    private Image mImage;
-    byte[] imageBytes = new byte[3000*4000*2];
-    float[] outputArray = new float[3000*4000]; //1500,2000,4
-    byte[] outputArray2 = new byte[750*1000*4]; //1500,2000,4
-    float[] inputTensor = new float[1*3*750*1000];
-    float[] outputTensor = new float[1*3*750*1000];
-    Bitmap randomBitmap = Bitmap.createBitmap(1000,750,Bitmap.Config.ARGB_8888);
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
-    ImageView mImageView;
 
     SeekBar mSeekBarShutterSpeed;
     SeekBar mSeekBarISO;
     TextView mTextViewShutter;
     TextView mTextViewISO;
-    long maxShutterSpeed;
+    TextView mTextureViewAutoExp;
 
-    //TFlite
-    TensorImage input = new TensorImage(DataType.FLOAT32);
-//    TensorImage output = new TensorImage(DataType.FLOAT32);
-    TensorBuffer probabilityBuffer =
-            TensorBuffer.createFixedSize(new int[]{1, 750,1000,3}, DataType.FLOAT32);
-    Interpreter tflite;// = new Interpreter(tfliteModel);
-    int[] inpShape = {1,750,1000,3};
+    DenoisingModel denoising;
+
+
     //**********************************************************************************************
+    private final CameraCaptureSession.StateCallback mPreviewOpenCallback = new CameraCaptureSession.StateCallback() {
+        @Override
+        public void onConfigured(CameraCaptureSession cameraCaptureSession) {
+            synchronized (mCameraStateLock) {
+                // The camera is already closed
+                if (null == mCameraDevice) {
+                    return;
+                }
+                try {
 
+                    cameraCaptureSession.setRepeatingRequest(
+                            mPreviewRequestBuilder.build(),
+                            mPreviewCallback, mBackgroundHandler);
+                } catch (CameraAccessException | IllegalStateException e) {
+                    e.printStackTrace();
+                    return;
+                }
+                // When the session is ready, we start displaying the preview.
+                mCaptureSession = cameraCaptureSession;
+            }
+        }
+
+        @Override
+        public void onConfigureFailed(CameraCaptureSession cameraCaptureSession) {
+            showToast("Failed to configure camera.");
+        }
+    };
 
     /**
      * {@link CameraDevice.StateCallback} is called when the currently active {@link CameraDevice}
@@ -360,7 +365,9 @@ public class Camera2RawFragment extends Fragment
                 mState = STATE_OPENED;
                 mCameraOpenCloseLock.release();
                 mCameraDevice = cameraDevice;
-
+                if (mPreviewSize != null && mTextureView.isAvailable()) {
+                    createCameraPreviewSessionLocked();
+                }
             }
         }
 
@@ -406,13 +413,9 @@ public class Camera2RawFragment extends Fragment
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-            Log.e("Filming", "onImageAva");
-            mImage = mRawImageReader.get().acquireLatestImage();
-            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-            buffer.get(imageBytes);
-            mImage.close();
-        }
 
+            dequeueAndSaveImage(mRawResultQueue, mRawImageReader);
+        }
     };
 
 
@@ -423,24 +426,21 @@ public class Camera2RawFragment extends Fragment
      */
 
     public void setSeekBarISO() {
-        long maxISO = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE).getUpper();
-        long minISO = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE).getLower();
-        final int isoStep = 20;
+        int maxISO = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE).getUpper();
+        int minISO = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE).getLower();
+        final int isoStep = 100;
+        mISO = minISO;
+        mSeekBarISO.setMin(1);
         mSeekBarISO.setMax((int)(maxISO/isoStep));
         mSeekBarISO.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                int iso = progress*isoStep;
-                Log.e("error", "setISO"+iso);
+                mISO = progress*isoStep;
+                mRatio = (int) ((gtIso*gtExposure)/(mISO*mShutterSpeed));
+                mRatio = Math.max(1, mRatio);
+
                 mTextViewISO.setX(seekBar.getThumb().getBounds().left);
-                mTextViewISO.setText(String.valueOf(iso));
-                captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, iso);
-                mCaptureRequest = captureBuilder.build();
-                try {
-                    mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-                } catch (CameraAccessException e) {
-                    e.printStackTrace();
-                }
+                mTextViewISO.setText(String.valueOf(mISO));
 
             }
             @Override
@@ -464,31 +464,21 @@ public class Camera2RawFragment extends Fragment
         final long[] arrayShutterSpeed = new long[arrayLen];
         for(int i=0;i<arrayLen;i++){
             float ss = (float) Math.pow(2, i+ranShutterSpeedMin);
-            arrayShutterSpeed[i]= (long)(1/ss*1000000000);
-            Log.e("error", "shutterRan"+i+" "+ss+" "+arrayShutterSpeed[i]);
+            arrayShutterSpeed[i]= (long)(1/ss*toUS);
         }
-
+        mShutterSpeed=arrayShutterSpeed[0];
 
         mSeekBarShutterSpeed.setMax(ranShutterSpeedMax-ranShutterSpeedMin-1);
         mSeekBarShutterSpeed.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                long shutterSpeed = arrayShutterSpeed[progress];
-                int s2 = (int) (1/(((float)shutterSpeed)/1000000000));
+                mShutterSpeed = arrayShutterSpeed[progress];
+                int s2 = (int) (1/(((float)mShutterSpeed)/toUS));
 
                 mTextViewShutter.setX(seekBar.getThumb().getBounds().left);
                 mTextViewShutter.setText("1/"+s2);
-
-                Log.e("error", "seekbarx"+progress+"ss:"+s2);
-
-                captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterSpeed);
-                mCaptureRequest = captureBuilder.build();
-                try {
-                    mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-                } catch (CameraAccessException e) {
-                    e.printStackTrace();
-                }
-
+                mRatio = (int) ((float)(gtIso*gtExposure)/((float) (mISO*mShutterSpeed)));
+                mRatio = Math.max(1, mRatio);
             }
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
@@ -505,54 +495,37 @@ public class Camera2RawFragment extends Fragment
 
     }
 
-    public void rawToVisualBitmap(){
-        for (int i=0; i<imageBytes.length/2; i++){
-            float out =  (float) ((imageBytes[i*2] & 0xFF) | ((imageBytes[i*2+1] & 0xFF) << 8));
-            out = (out-64)/(1023-64)*255;
-            outputArray[i]=((out));
+    private final CameraCaptureSession.CaptureCallback mPreviewCallback
+            = new CameraCaptureSession.CaptureCallback() {
+        @Override
+        public void onCaptureStarted(CameraCaptureSession session, CaptureRequest request,
+                                     long timestamp, long frameNumber) {
         }
-        for (int i=0; i< 3000; i=i+4){
-            for (int j=0; j<4000; j=j+4) {
-                float g1 = (float) (outputArray[i * 4000 + j]);
-                float r = (float) (outputArray[(i+1) * 4000 + j]);
-                float b = (float) (outputArray[i * 4000 + j+1]);
-                float g2 = (float) (outputArray[(i+1) * 4000 + j+1]);
-                float g = (float) ((g1+g2)/2);
-//                inputTensor[(i/4)*3000+(3*j/4)+0] = r;
-//                inputTensor[(i/4)*3000+(3*j/4)+1] = g;
-//                inputTensor[(i/4)*3000+(3*j/4)+2] = b;
-//                inputTensor[(i/4)*1000*4+(j/4)*4+3] = g;
-                inputTensor[((0*750*1000)+(i/4)*1000+(j/4))] = r;
-                inputTensor[((1*750*1000)+(i/4)*1000+(j/4))] = g;
-                inputTensor[((2*750*1000)+(i/4)*1000+(j/4))] = b;
 
-            }
+        @Override
+        public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
+                                       TotalCaptureResult result) {
+            gtIso = result.get(CaptureResult.SENSOR_SENSITIVITY);
+            gtExposure = result.get(CaptureResult.SENSOR_EXPOSURE_TIME);
+            long frequency = (long) (1/((float) gtExposure/toUS));
+            mRatio = (int) ((float)(gtIso*gtExposure)/((float) (mISO*mShutterSpeed)));
+            mRatio = Math.max(1, mRatio);
+            mTextureViewAutoExp.setText(mRatio+"X faster");
         }
-//        for (int i=0; i< 3000; i=i+4){
-//            for (int j=0; j<4000; j=j+4) {
-//                float g1 = (float) (outputArray[i * 4000 + j]);
-//                byte b = (byte) (outputArray[(i+1) * 4000 + j]);
-//                byte r = (byte) (outputArray[i * 4000 + j+1]);
-//                float g2 = (float) (outputArray[(i+1) * 4000 + j+1]);
-//                byte g = (byte) ((g1+g2)/2);
-//                outputArray2[(i/4)*1000*4+(j/4)*4+0] = r;
-//                outputArray2[(i/4)*1000*4+(j/4)*4+1] = g;
-//                outputArray2[(i/4)*1000*4+(j/4)*4+2] = b;
-//                outputArray2[(i/4)*1000*4+(j/4)*4+3] = -1;
-//
-//            }
-//        }
 
-//        randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
-//        mImageView.setImageBitmap(randomBitmap);
+        @Override
+        public void onCaptureFailed(CameraCaptureSession session, CaptureRequest request,
+                                    CaptureFailure failure) {
+        }
 
-    }
+    };
+
     private final CameraCaptureSession.CaptureCallback mCaptureCallback
             = new CameraCaptureSession.CaptureCallback() {
         @Override
         public void onCaptureStarted(CameraCaptureSession session, CaptureRequest request,
                                      long timestamp, long frameNumber) {
-
+//            Log.e("error", "denoising onCaptureStarted");
             // Look up the ImageSaverBuilder for this request and update it with the file name
             // based on the capture start time.
             }
@@ -560,65 +533,34 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureCompleted(CameraCaptureSession session, CaptureRequest request,
                                        TotalCaptureResult result) {
+            int requestId = (int) request.getTag();
+            ImageSaver.ImageSaverBuilder rawBuilder;
+            StringBuilder sb = new StringBuilder();
+            String timeName = generateTimestamp();
+            File rawFile = new File(Environment.
+                        getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                        "RAW_" +  timeName+ ".dng");
+            File rawFileOri = new File(Environment.
+                    getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
+                    "RAW_" + timeName + "_ori_.dng");
+            synchronized (mCameraStateLock) {
 
-//            float[][][][] input = new float[1][4][750][1500];
-//            for(int c=0; c<4;c++){
-//                for(int h=0;h<750;h++){
-//                    for(int w=0;w<1500;w++){
-//                        input[0][c][h][w]= 1;//outputArray2[c*750*1500+h*1500+w];
-//                    }
-//                }
-//            }
-
-
-            rawToVisualBitmap();
-            input.load(inputTensor, inpShape);
-//            try {
-//                int[] inpShape = {1,750,1000,3};
-//                TensorImage input = new TensorImage(DataType.FLOAT32);
-//                input.load(inputTensor, inpShape);
-//
-//                TensorImage output = new TensorImage(DataType.FLOAT32);
-//                output.load(outputTensor, inpShape);
-//
-//                TensorBuffer probabilityBuffer =
-//                        TensorBuffer.createFixedSize(new int[]{1, 750,1000,3}, DataType.FLOAT32);
-//
-//                MappedByteBuffer tfliteModel;
-//                tfliteModel = loadModelFile();
-//                Interpreter tflite = new Interpreter(tfliteModel);
-//                Log.e("error", "load pmrid model");
-//
-//                Log.e("error", "init input output");
-
-                tflite.run(input.getBuffer(), probabilityBuffer.getBuffer());
-                Log.e("error", "finished run");
-
-                outputTensor = probabilityBuffer.getFloatArray();
-                for (int i=0; i< 750; i++){
-                    for (int j=0; j<1000; j++) {
-//                        byte r = (byte) (outputTensor[i * 3000 + (3*j)]);
-//                        byte g = (byte) (outputTensor[i * 3000 + (3*j)+1]);
-//                        byte b = (byte) (outputTensor[i * 3000 + (3*j)+2]);
-                        byte r = (byte) (outputTensor[(0*750*1000)+i*1000 + j]);
-                        byte g = (byte) (outputTensor[(1*750*1000)+i*1000 + j]);
-                        byte b = (byte) (outputTensor[(2*750*1000)+i*1000 + j]);
-                        outputArray2[i*4000+(4*j)+0] = r;
-                        outputArray2[i*4000+(4*j)+1] = g;
-                        outputArray2[i*4000+(4*j)+2] = b;
-                        outputArray2[i*4000+(4*j)+3] = -1;
-
-                    }
+                rawBuilder = mRawResultQueue.get(requestId);
+                if (rawBuilder != null) {
+                    rawBuilder.setFile(rawFile);
+                    rawBuilder.setFileOri(rawFileOri);
+                    rawBuilder.setResult(result);
+                    rawBuilder.setLargetSize(largestRaw);
+                    rawBuilder.setDenoisingModel(denoising);
+                    rawBuilder.setBayerPattern(bayerPattern);
+                    rawBuilder.setRate(mRatio);
+                    sb.append("Saving RAW as: ");
+                    sb.append(rawBuilder.getSaveLocation());
                 }
-//                randomBitmap = output.getBitmap();
-                randomBitmap.copyPixelsFromBuffer(ByteBuffer.wrap(outputArray2));
-                mImageView.setImageBitmap(randomBitmap);
-//                Log.e("error", "outshape"+(outTensor.shape()[2])+(outTensor.shape()[3]));
-//            Log.e("error", String.valueOf(tflite.getOutputIndex((String)"output")));
-//            } catch (IOException e) {
-//                e.printStackTrace();
-//            }
+                handleCompletionLocked(requestId, rawBuilder, mRawResultQueue);
 
+
+            }
         }
 
         @Override
@@ -655,65 +597,36 @@ public class Camera2RawFragment extends Fragment
 
 
         final View v = inflater.inflate(R.layout.fragment_camera2_basic, container, false);
-        v.setOnKeyListener(new View.OnKeyListener() {
-            @Override
-            public boolean onKey(View v, int keyCode, KeyEvent event) {
-                // KeyEvent.ACTION_DOWN以外のイベントを無視する
-                // （これがないとKeyEvent.ACTION_UPもフックしてしまう）
-                if(event.getAction() != KeyEvent.ACTION_DOWN) {
-                    return false;
-                }
 
-                switch(keyCode) {
-                    case KeyEvent.KEYCODE_VOLUME_UP:
-                        // TODO:音量増加キーが押された時のイベント
-                        Log.e("error", "press");
-                        return true;
-                    case KeyEvent.KEYCODE_VOLUME_DOWN:
-                        // TODO:音量減少キーが押された時のイベント
-                        return true;
-                    default:
-                        return false;
-                }
-            }
-        });
-
-        // View#setFocusableInTouchModeでtrueをセットしておくこと
-        v.setFocusableInTouchMode(true);
         return v;
     }
-    private MappedByteBuffer loadModelFile() throws IOException {
-        AssetFileDescriptor fileDescriptor= getResources().getAssets().openFd("pmrid.tflite");
-        FileInputStream inputStream=new FileInputStream(fileDescriptor.getFileDescriptor());
-        FileChannel fileChannel=inputStream.getChannel();
-        long startOffset=fileDescriptor.getStartOffset();
-        long declareLength=fileDescriptor.getDeclaredLength();
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY,startOffset,declareLength);
-    }
+
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         Log.e("error", "onViewCreated2");
 
         try {
-            int numThreads = 4;
-            Interpreter.Options tfLiteOptions = new Interpreter.Options();
-            tfLiteOptions.setNumThreads(numThreads);
-            MappedByteBuffer tfliteModel;
-            tfliteModel = loadModelFile();
-            tflite = new Interpreter(tfliteModel, tfLiteOptions);
+            denoising = new DenoisingModel(getContext());
+            denoising.loadModelFile("model_allPhones.tflite", 4);//loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
         } catch (IOException e) {
             e.printStackTrace();
         }
 
 
         view.findViewById(R.id.picture).setOnClickListener(this);
-//        view.findViewById(R.id.info).setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
-        mImageView = (ImageView) view.findViewById(R.id.imageView);
+        mTextureViewAutoExp = view.findViewById(R.id.textViewAutoExp);
         mSeekBarShutterSpeed = view.findViewById(R.id.seekBarShutterSpeed);
         mSeekBarISO = view.findViewById(R.id.seekBarISO);
         mTextViewShutter = view.findViewById(R.id.textViewShutterSpeed);
         mTextViewISO = view.findViewById(R.id.textViewISO);
+        // Setup a new OrientationEventListener.  This is used to handle rotation events like a
+        // 180 degree rotation that do not normally trigger a call to onCreate to do view re-layout
+        // or otherwise cause the preview TextureView's size to change.
+        initOrientationEventListener();
+
+    }
+    void initOrientationEventListener(){
         // Setup a new OrientationEventListener.  This is used to handle rotation events like a
         // 180 degree rotation that do not normally trigger a call to onCreate to do view re-layout
         // or otherwise cause the preview TextureView's size to change.
@@ -732,13 +645,18 @@ public class Camera2RawFragment extends Fragment
             mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
         }
     }
-
     @Override
     public void onResume() {
         super.onResume();
-//        startBackgroundThread();
         openCamera();
-
+        if (mTextureView.isAvailable()) {
+            configureTransform(mTextureView.getWidth(), mTextureView.getHeight());
+        } else {
+            mTextureView.setSurfaceTextureListener(mSurfaceTextureListener);
+        }
+        if (mOrientationListener != null && mOrientationListener.canDetectOrientation()) {
+            mOrientationListener.enable();
+        }
         Log.e("error", "onResume");
 
     }
@@ -749,7 +667,7 @@ public class Camera2RawFragment extends Fragment
             mOrientationListener.disable();
         }
         closeCamera();
-        stopBackgroundThread();
+//        stopBackgroundThread();
         super.onPause();
     }
 
@@ -809,10 +727,11 @@ public class Camera2RawFragment extends Fragment
                 // For still image captures, we use the largest available size.
 
 
-                Size largestRaw = Collections.max(
+                largestRaw = Collections.max(
                         Arrays.asList(map.getOutputSizes(ImageFormat.RAW_SENSOR)),
                         new CompareSizesByArea());
 
+//                imageBytes = new byte[largestRaw.getHeight()*largestRaw.getWidth()*2];
                 synchronized (mCameraStateLock) {
                     // Set up ImageReaders for JPEG and RAW outputs.  Place these in a reference
                     // counted wrapper to ensure they are only closed when all background tasks
@@ -821,7 +740,7 @@ public class Camera2RawFragment extends Fragment
                     if (mRawImageReader == null || mRawImageReader.getAndRetain() == null) {
                         mRawImageReader = new RefCountedAutoCloseable<>(
                                 ImageReader.newInstance(largestRaw.getWidth(),
-                                        largestRaw.getHeight(), ImageFormat.RAW_SENSOR, /*maxImages*/ 1));
+                                        largestRaw.getHeight(), ImageFormat.RAW_SENSOR, /*maxImages*/ 10));
                     }
                     mRawImageReader.get().setOnImageAvailableListener(
                             mOnRawImageAvailableListener, mBackgroundHandler);
@@ -850,6 +769,7 @@ public class Camera2RawFragment extends Fragment
         if (!setUpCameraOutputs()) {
             return;
         }
+
         if (!hasAllPermissionsGranted()) {
             requestCameraPermissions();
             return;
@@ -859,14 +779,25 @@ public class Camera2RawFragment extends Fragment
         CameraManager manager = (CameraManager) activity.getSystemService(Context.CAMERA_SERVICE);
         try {
             // Wait for any previously running session to finish.
+            if (!mCameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
+                throw new RuntimeException("Time out waiting to lock camera opening.");
+            }
+
+            String cameraId;
+            Handler backgroundHandler;
+            synchronized (mCameraStateLock) {
+                cameraId = mCameraId;
+                backgroundHandler = mBackgroundHandler;
+            }
 
             // Attempt to open the camera. mStateCallback will be called on the background handler's
             // thread when this succeeds or fails.
-            manager.openCamera(mCameraId, mStateCallback, mBackgroundHandler);
+            manager.openCamera(cameraId, mStateCallback, backgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
+        } catch (InterruptedException e) {
+            throw new RuntimeException("Interrupted while trying to lock camera opening.", e);
         }
-
     }
 
     /**
@@ -987,7 +918,6 @@ public class Camera2RawFragment extends Fragment
      */
     private void createCameraPreviewSessionLocked() {
         try {
-            Log.e("error", "createCameraPreviewSessionLocked");
             SurfaceTexture texture = mTextureView.getSurfaceTexture();
             // We configure the size of default buffer to be the size of camera preview we want.
             texture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
@@ -996,33 +926,20 @@ public class Camera2RawFragment extends Fragment
             Surface surface = new Surface(texture);
 
             // We set up a CaptureRequest.Builder with the output Surface.
-//            mPreviewRequestBuilder
-//                    = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-//            mPreviewRequestBuilder.addTarget(surface);
+            mPreviewRequestBuilder
+                    = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+            mPreviewRequestBuilder.addTarget(surface);
             // Here, we create a CameraCaptureSession for camera preview.
             mCameraDevice.createCaptureSession(Arrays.asList(surface,
-
-                            mRawImageReader.get().getSurface()), new CameraCaptureSession.StateCallback() {
-                        @Override
-                        public void onConfigured(CameraCaptureSession cameraCaptureSession) {
-                            synchronized (mCameraStateLock) {
-                                // The camera is already closed
-                                mCaptureSession = cameraCaptureSession;
-                            }
-                        }
-
-                        @Override
-                        public void onConfigureFailed(CameraCaptureSession cameraCaptureSession) {
-                            showToast("Failed to configure camera.");
-                        }
-                    }, mBackgroundHandler
+                            mRawImageReader.get().getSurface()), mPreviewOpenCallback, mBackgroundHandler
             );
+            setSeekBarShutterSpeed();
+            setSeekBarISO();
+//        captureStillPictureLocked();
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
-//        captureStillPictureLocked();
     }
-
     private void configureTransform(int viewWidth, int viewHeight) {
         Log.e("error", "configureTransform");
         Activity activity = getActivity();
@@ -1137,31 +1054,30 @@ public class Camera2RawFragment extends Fragment
      */
     private void captureStillPictureLocked() {
         Log.e("error", "captureStillPictureLocked");
-//        mState = STATE_WAITING_FOR_3A_CONVERGENCE;
-        try {
+        synchronized (mCameraStateLock) {
+            try {
+                bayerPattern = bayerPatterns[mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)];
+                captureBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+                captureBuilder.addTarget(mRawImageReader.get().getSurface());
+                captureBuilder.setTag(mRequestCounter.getAndIncrement());
+                captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
+                captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
+                captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, mISO);
+                captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mShutterSpeed);
 
-            // This is the CaptureRequest.Builder that we use to take a picture.
-//            final CaptureRequest.Builder captureBuilder =
+                CaptureRequest mCaptureRequest = captureBuilder.build();
 
-            captureBuilder= mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
-            captureBuilder.addTarget(mRawImageReader.get().getSurface());
-            captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
-            captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
-            captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, 6400);
-            captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, (long) 5600000);//(long)(0.02 *1000000000));
-            // Use the same AE and AF modes as the preview.
-//            setup3AControlsLocked(captureBuilder);
-            // Set request tag to easily track results in callbacks.
-//            captureBuilder.setTag(mRequestCounter.getAndIncrement());
-//            mCaptureSession.setRepeatingRequest(captureBuilder.build(), mCaptureCallback, mBackgroundHandler);
-            mCaptureRequest = captureBuilder.build();
-            mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-//            mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
+                ImageSaver.ImageSaverBuilder rawBuilder = new ImageSaver.ImageSaverBuilder(getActivity())
+                        .setCharacteristics(mCharacteristics);
 
-            setSeekBarShutterSpeed();
-            setSeekBarISO();
-        } catch (CameraAccessException e) {
-            e.printStackTrace();
+
+                mRawResultQueue.put((int) mCaptureRequest.getTag(), rawBuilder);
+
+                mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
+
+            } catch (CameraAccessException e) {
+                e.printStackTrace();
+            }
         }
     }
 
@@ -1378,5 +1294,288 @@ public class Camera2RawFragment extends Fragment
         }
 
     }
+    private static String generateTimestamp() {
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy_MM_dd_HH_mm_ss_SSS", Locale.US);
+        return sdf.format(new Date());
+    }
 
+    private static class ImageSaver implements Runnable {
+
+        /**
+         * The image to save.
+         */
+        private final Image mImage;
+        /**
+         * The file we save the image into.
+         */
+        private final File mFile;
+
+        /**
+         * The CaptureResult for this image capture.
+         */
+        private final CaptureResult mCaptureResult;
+
+        /**
+         * The CameraCharacteristics for this camera device.
+         */
+        private final CameraCharacteristics mCharacteristics;
+
+        /**
+         * The Context to use when updating MediaStore with the saved images.
+         */
+        private final Context mContext;
+
+        /**
+         * A reference counted wrapper for the ImageReader that owns the given image.
+         */
+        private final RefCountedAutoCloseable<ImageReader> mReader;
+
+        private final Size mLargestSize;
+
+        private final DenoisingModel tfLiteModel;
+
+        private  final int mRate;
+
+        private final File mFileOri;
+
+        private  final String mBayerPattern;
+
+        private ImageSaver(Image image, File file, File fileOri, CaptureResult result,
+                           CameraCharacteristics characteristics, Context context,
+                           RefCountedAutoCloseable<ImageReader> reader, Size largestSize,
+                            int mRatio, DenoisingModel denoisingModel, String bayerPattern) {
+            mImage = image;
+            mFile = file;
+            mFileOri = fileOri;
+            mCaptureResult = result;
+            mCharacteristics = characteristics;
+            mContext = context;
+            mReader = reader;
+            mLargestSize = largestSize;
+
+            mRate = mRatio;
+            tfLiteModel = denoisingModel;
+            mBayerPattern = bayerPattern;
+        }
+        @Override
+        public void run() {
+            boolean success = false;
+            int format = mImage.getFormat();
+            switch (format) {
+                case ImageFormat.RAW_SENSOR: {
+                    DngCreator dngCreator = new DngCreator(mCharacteristics, mCaptureResult);
+
+                    FileOutputStream output = null;
+                    FileOutputStream outputStream = null;
+
+                    tfLiteModel.setBayerPattern(mBayerPattern);
+                    tfLiteModel.initBytesArray(mLargestSize);
+                    tfLiteModel.initTensor(mImage, mRate);
+
+                    InputStream targetStream = new ByteArrayInputStream(tfLiteModel.getOuputBytesArray());
+                    try {
+                        output = new FileOutputStream(mFileOri);
+                        outputStream = new FileOutputStream(mFile);
+                        dngCreator.writeImage(output, mImage);
+                        dngCreator.writeInputStream(outputStream, mLargestSize, targetStream, 0);
+                        success = true;
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    } finally {
+                        mImage.close();
+                        closeOutput(outputStream);
+                        closeOutput(output);
+                    }
+                    break;
+                }
+                default: {
+                    Log.e(TAG, "Cannot save image, unexpected image format:" + format);
+                    break;
+                }
+            }
+
+            // Decrement reference count to allow ImageReader to be closed to free up resources.
+            mReader.close();
+
+            // If saving the file succeeded, update MediaStore.
+            if (success) {
+                MediaScannerConnection.scanFile(mContext, new String[]{mFile.getPath(), mFileOri.getPath()},
+                        /*mimeTypes*/null, new MediaScannerConnection.MediaScannerConnectionClient() {
+                            @Override
+                            public void onMediaScannerConnected() {
+                                // Do nothing
+                            }
+                            @Override
+                            public void onScanCompleted(String path, Uri uri) {
+                                Log.i(TAG, "Scanned " + path + ":");
+                                Log.i(TAG, "-> uri=" + uri);
+                            }
+                        });
+
+            }
+        }
+
+
+        /**
+         * Builder class for constructing {@link ImageSaver}s.
+         * <p/>
+         * This class is thread safe.
+         */
+        public static class ImageSaverBuilder {
+            private Image mImage;
+            private File mFile;
+            private File mFileOri;
+            private CaptureResult mCaptureResult;
+            private CameraCharacteristics mCharacteristics;
+            private Context mContext;
+            private RefCountedAutoCloseable<ImageReader> mReader;
+            private Size mLargestSize;
+            private int mRate;
+            private DenoisingModel tfLiteModel;
+            private String mBayerPattern;
+            /**
+             * Construct a new ImageSaverBuilder using the given {@link Context}.
+             *
+             * @param context a {@link Context} to for accessing the
+             *                {@link android.provider.MediaStore}.
+             */
+            public ImageSaverBuilder(final Context context) {
+                mContext = context;
+            }
+
+            public synchronized ImageSaverBuilder setRefCountedReader(
+                    RefCountedAutoCloseable<ImageReader> reader) {
+                if (reader == null) throw new NullPointerException();
+
+                mReader = reader;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setImage(final Image image) {
+                if (image == null) throw new NullPointerException();
+                mImage = image;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setFile(final File file) {
+                if (file == null) throw new NullPointerException();
+                mFile = file;
+                return this;
+            }
+            public synchronized ImageSaverBuilder setFileOri(final File fileOri) {
+                if (fileOri == null) throw new NullPointerException();
+                mFileOri = fileOri;
+                return this;
+            }
+            public synchronized ImageSaverBuilder setResult(final CaptureResult result) {
+                if (result == null) throw new NullPointerException();
+                mCaptureResult = result;
+                return this;
+            }
+
+            public synchronized ImageSaverBuilder setCharacteristics(
+                    final CameraCharacteristics characteristics) {
+                if (characteristics == null) throw new NullPointerException();
+                mCharacteristics = characteristics;
+                return this;
+            }
+            public synchronized ImageSaverBuilder setLargetSize(
+                    final Size largestSize) {
+                if (largestSize == null) throw new NullPointerException();
+                mLargestSize = largestSize;
+                return this;
+            }
+
+
+            public  synchronized ImageSaverBuilder setRate(
+                    final int mRatio){
+                if (mRatio == 0) throw  new NullPointerException();
+                mRate=mRatio;
+                return this;
+            }
+            public synchronized ImageSaverBuilder setDenoisingModel(
+                    final DenoisingModel denoisingModel){
+                if (denoisingModel == null) throw  new NullPointerException();
+                tfLiteModel = denoisingModel;
+                return this;
+            }
+            public synchronized ImageSaverBuilder setBayerPattern(
+                    final String bayerPattern){
+                if (bayerPattern == null) throw  new NullPointerException();
+                mBayerPattern = bayerPattern;
+                return this;
+            }
+            public synchronized ImageSaver buildIfComplete() {
+                if (!isComplete()) {
+                    return null;
+                }
+                return new ImageSaver(mImage, mFile, mFileOri, mCaptureResult, mCharacteristics, mContext,
+                        mReader, mLargestSize, mRate, tfLiteModel, mBayerPattern);
+            }
+
+            public synchronized String getSaveLocation() {
+                return (mFile == null) ? "Unknown" : mFile.toString();
+            }
+
+            private boolean isComplete() {
+                return mImage != null && mFile != null && mCaptureResult != null
+                        && mCharacteristics != null;
+            }
+        }
+    }
+    private static void closeOutput(OutputStream outputStream) {
+        if (null != outputStream) {
+            try {
+                outputStream.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+    private void handleCompletionLocked(int requestId, ImageSaver.ImageSaverBuilder builder,
+                                        TreeMap<Integer, ImageSaver.ImageSaverBuilder> queue) {
+        if (builder == null) return;
+        ImageSaver saver = builder.buildIfComplete();
+        if (saver != null) {
+            queue.remove(requestId);
+            AsyncTask.THREAD_POOL_EXECUTOR.execute(saver);
+        }
+    }
+
+    private void dequeueAndSaveImage(TreeMap<Integer, ImageSaver.ImageSaverBuilder> pendingQueue,
+                                     RefCountedAutoCloseable<ImageReader> reader) {
+        synchronized (mCameraStateLock) {
+            Map.Entry<Integer, ImageSaver.ImageSaverBuilder> entry =
+                    pendingQueue.firstEntry();
+            ImageSaver.ImageSaverBuilder builder = entry.getValue();
+
+            // Increment reference count to prevent ImageReader from being closed while we
+            // are saving its Images in a background thread (otherwise their resources may
+            // be freed while we are writing to a file).
+            if (reader == null || reader.getAndRetain() == null) {
+                Log.e(TAG, "Paused the activity before we could save the image," +
+                        " ImageReader already closed.");
+                pendingQueue.remove(entry.getKey());
+                return;
+            }
+
+            Image image;
+            try {
+                image = reader.get().acquireNextImage();
+
+
+
+
+            } catch (IllegalStateException e) {
+                Log.e(TAG, "Too many images queued for saving, dropping image for request: " +
+                        entry.getKey());
+                pendingQueue.remove(entry.getKey());
+                return;
+            }
+
+            builder.setRefCountedReader(reader).setImage(image);
+
+            handleCompletionLocked(entry.getKey(), builder, pendingQueue);
+        }
+    }
 }

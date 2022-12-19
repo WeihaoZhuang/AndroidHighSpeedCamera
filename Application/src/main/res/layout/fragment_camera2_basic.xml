@@ -19,7 +19,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <com.example.android.camera2raw.AutoFitTextureView
+    <com.example.android.anroidHSSP.AutoFitTextureView
         android:id="@+id/texture"
         android:layout_width="match_parent"
         android:layout_height="444dp"
@@ -66,13 +66,13 @@
             android:layout_height="wrap_content"
             android:text="ISO" />
 
+        <TextView
+            android:id="@+id/textViewAutoExp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="ccc" />
+
     </LinearLayout>
 
-    <ImageView
-        android:id="@+id/imageView"
-        android:layout_width="match_parent"
-        android:layout_height="461dp"
-        android:rotation="90"
-        tools:srcCompat="@tools:sample/avatars" />
 
 </RelativeLayout>

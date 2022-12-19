@@ -14,12 +14,12 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2raw;
+package com.example.android.anroidHSSP;
 
 import android.app.Activity;
 import android.os.Bundle;
-import android.util.Log;
-import android.view.KeyEvent;
+
+import com.example.android.androidHSSP.R;
 
 /**
  * Activity displaying a fragment that implements RAW photo captures.
