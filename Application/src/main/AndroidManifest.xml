@@ -16,7 +16,7 @@
 -->
 
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.android.camera2raw"
+    package="com.example.android.androidHSSP"
     android:versionCode="1"
     android:versionName="1.0">
 
@@ -35,7 +35,7 @@
         android:largeHeap="true"
         android:theme="@style/MaterialTheme">
 
-        <activity android:name="com.example.android.camera2raw.CameraActivity"
+        <activity android:name="com.example.android.anroidHSSP.CameraActivity"
                   android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2raw;
+package com.example.android.anroidHSSP;
 
 import android.content.Context;
 import android.util.AttributeSet;

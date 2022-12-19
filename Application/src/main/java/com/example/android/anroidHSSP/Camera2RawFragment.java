@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.example.android.camera2raw;
+package com.example.android.anroidHSSP;
 
 import android.Manifest;
 import android.app.Activity;
@@ -25,12 +25,9 @@ import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
-import android.content.res.AssetFileDescriptor;
-import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.graphics.Point;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.hardware.SensorManager;
@@ -56,36 +53,29 @@ import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
 import android.os.Message;
-import android.provider.ContactsContract;
 import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.util.Size;
 import android.util.SparseIntArray;
-import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.OrientationEventListener;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.example.android.androidHSSP.R;
+
 import java.io.ByteArrayInputStream;
-import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -95,25 +85,10 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Random;
 import java.util.TreeMap;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import org.tensorflow.lite.DataType;
-import org.tensorflow.lite.Interpreter;
-import org.tensorflow.lite.InterpreterApi;
-import org.tensorflow.lite.gpu.GpuDelegate;
-import org.tensorflow.lite.nnapi.NnApiDelegate;
-import org.tensorflow.lite.support.image.TensorImage;
-import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
-import org.tensorflow.lite.gpu.CompatibilityList;
-import org.tensorflow.lite.support.tensorbuffer.TensorBufferFloat;
-
-import ai.djl.ndarray.NDArray;
-import ai.djl.ndarray.NDManager;
-import ai.djl.ndarray.types.Shape;
 
 public class Camera2RawFragment extends Fragment
         implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
@@ -632,7 +607,7 @@ public class Camera2RawFragment extends Fragment
 
         try {
             denoising = new DenoisingModel(getContext());
-            denoising.loadModelFile("model_float32.tflite", 4);//loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
+            denoising.loadModelFile("model_allPhones.tflite", 4);//loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -673,7 +648,6 @@ public class Camera2RawFragment extends Fragment
     @Override
     public void onResume() {
         super.onResume();
-//        startBackgroundThread();
         openCamera();
         if (mTextureView.isAvailable()) {
             configureTransform(mTextureView.getWidth(), mTextureView.getHeight());

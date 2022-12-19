@@ -1,9 +1,8 @@
-package com.example.android.camera2raw;
+package com.example.android.anroidHSSP;
 
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.media.Image;
-import android.util.Log;
 import android.util.Size;
 
 import org.tensorflow.lite.DataType;
