@@ -330,13 +330,11 @@ public class Camera2RawFragment extends Fragment
     int mISO;
     long mShutterSpeed;
     int mRatio=1;
-    int Height = 1488;
-    int Width = 2000;
-    int Channel = 4;
     long gtExposure;
     int gtIso;
     private Size largestRaw;
-
+    String[] bayerPatterns = {"RGGB", "GRBG", "GBRG","BGGR"};
+    String bayerPattern;
 
     CaptureRequest.Builder captureBuilder;
     CaptureRequest mCaptureRequest;
@@ -351,7 +349,33 @@ public class Camera2RawFragment extends Fragment
 
 
     //**********************************************************************************************
+    private final CameraCaptureSession.StateCallback mPreviewOpenCallback = new CameraCaptureSession.StateCallback() {
+        @Override
+        public void onConfigured(CameraCaptureSession cameraCaptureSession) {
+            synchronized (mCameraStateLock) {
+                // The camera is already closed
+                if (null == mCameraDevice) {
+                    return;
+                }
+                try {
 
+                    cameraCaptureSession.setRepeatingRequest(
+                            mPreviewRequestBuilder.build(),
+                            mPreviewCallback, mBackgroundHandler);
+                } catch (CameraAccessException | IllegalStateException e) {
+                    e.printStackTrace();
+                    return;
+                }
+                // When the session is ready, we start displaying the preview.
+                mCaptureSession = cameraCaptureSession;
+            }
+        }
+
+        @Override
+        public void onConfigureFailed(CameraCaptureSession cameraCaptureSession) {
+            showToast("Failed to configure camera.");
+        }
+    };
 
     /**
      * {@link CameraDevice.StateCallback} is called when the currently active {@link CameraDevice}
@@ -414,15 +438,6 @@ public class Camera2RawFragment extends Fragment
 
         @Override
         public void onImageAvailable(ImageReader reader) {
-//            synchronized (mCameraStateLock) {
-//            mImage = mRawImageReader.get().acquireLatestImage();
-//            ByteBuffer buffer = mImage.getPlanes()[0].getBuffer();
-//            buffer.get(imageBytes);
-//            Log.e("error", "imageBytes:"+imageBytes[0]+" "+imageBytes[1]);
-//            mImage.close();
-//
-//
-//            }
 
             dequeueAndSaveImage(mRawResultQueue, mRawImageReader);
         }
@@ -438,27 +453,19 @@ public class Camera2RawFragment extends Fragment
     public void setSeekBarISO() {
         int maxISO = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE).getUpper();
         int minISO = mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE).getLower();
-        final int isoStep = 20;
+        final int isoStep = 100;
         mISO = minISO;
+        mSeekBarISO.setMin(1);
         mSeekBarISO.setMax((int)(maxISO/isoStep));
         mSeekBarISO.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 mISO = progress*isoStep;
-//                Log.e("error", "setISO"+iso);
-
                 mRatio = (int) ((gtIso*gtExposure)/(mISO*mShutterSpeed));
                 mRatio = Math.max(1, mRatio);
 
                 mTextViewISO.setX(seekBar.getThumb().getBounds().left);
                 mTextViewISO.setText(String.valueOf(mISO));
-//                captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, iso);
-//                mCaptureRequest = captureBuilder.build();
-//                try {
-//                    mCaptureSession.setRepeatingRequest(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
-//                } catch (CameraAccessException e) {
-//                    e.printStackTrace();
-//                }
 
             }
             @Override
@@ -482,8 +489,7 @@ public class Camera2RawFragment extends Fragment
         final long[] arrayShutterSpeed = new long[arrayLen];
         for(int i=0;i<arrayLen;i++){
             float ss = (float) Math.pow(2, i+ranShutterSpeedMin);
-            arrayShutterSpeed[i]= (long)(1/ss*1000000000);
-            Log.e("error", "shutterRan"+i+" "+ss+" "+arrayShutterSpeed[i]);
+            arrayShutterSpeed[i]= (long)(1/ss*toUS);
         }
         mShutterSpeed=arrayShutterSpeed[0];
 
@@ -492,13 +498,12 @@ public class Camera2RawFragment extends Fragment
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
                 mShutterSpeed = arrayShutterSpeed[progress];
-                int s2 = (int) (1/(((float)mShutterSpeed)/1000000000));
+                int s2 = (int) (1/(((float)mShutterSpeed)/toUS));
 
                 mTextViewShutter.setX(seekBar.getThumb().getBounds().left);
                 mTextViewShutter.setText("1/"+s2);
                 mRatio = (int) ((float)(gtIso*gtExposure)/((float) (mISO*mShutterSpeed)));
                 mRatio = Math.max(1, mRatio);
-
             }
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
@@ -530,7 +535,7 @@ public class Camera2RawFragment extends Fragment
             long frequency = (long) (1/((float) gtExposure/toUS));
             mRatio = (int) ((float)(gtIso*gtExposure)/((float) (mISO*mShutterSpeed)));
             mRatio = Math.max(1, mRatio);
-            mTextureViewAutoExp.setText("GtISO:"+gtIso+" GtFre:"+ frequency+" ratio:"+mRatio);
+            mTextureViewAutoExp.setText(mRatio+"X faster");
         }
 
         @Override
@@ -545,7 +550,7 @@ public class Camera2RawFragment extends Fragment
         @Override
         public void onCaptureStarted(CameraCaptureSession session, CaptureRequest request,
                                      long timestamp, long frameNumber) {
-
+//            Log.e("error", "denoising onCaptureStarted");
             // Look up the ImageSaverBuilder for this request and update it with the file name
             // based on the capture start time.
             }
@@ -572,7 +577,7 @@ public class Camera2RawFragment extends Fragment
                     rawBuilder.setResult(result);
                     rawBuilder.setLargetSize(largestRaw);
                     rawBuilder.setDenoisingModel(denoising);
-
+                    rawBuilder.setBayerPattern(bayerPattern);
                     rawBuilder.setRate(mRatio);
                     sb.append("Saving RAW as: ");
                     sb.append(rawBuilder.getSaveLocation());
@@ -761,7 +766,7 @@ public class Camera2RawFragment extends Fragment
                     if (mRawImageReader == null || mRawImageReader.getAndRetain() == null) {
                         mRawImageReader = new RefCountedAutoCloseable<>(
                                 ImageReader.newInstance(largestRaw.getWidth(),
-                                        largestRaw.getHeight(), ImageFormat.RAW_SENSOR, /*maxImages*/ 5));
+                                        largestRaw.getHeight(), ImageFormat.RAW_SENSOR, /*maxImages*/ 10));
                     }
                     mRawImageReader.get().setOnImageAvailableListener(
                             mOnRawImageAvailableListener, mBackgroundHandler);
@@ -952,33 +957,7 @@ public class Camera2RawFragment extends Fragment
             mPreviewRequestBuilder.addTarget(surface);
             // Here, we create a CameraCaptureSession for camera preview.
             mCameraDevice.createCaptureSession(Arrays.asList(surface,
-                            mRawImageReader.get().getSurface()), new CameraCaptureSession.StateCallback() {
-                        @Override
-                        public void onConfigured(CameraCaptureSession cameraCaptureSession) {
-                            synchronized (mCameraStateLock) {
-                                // The camera is already closed
-                                if (null == mCameraDevice) {
-                                    return;
-                                }
-                                try {
-
-                                    cameraCaptureSession.setRepeatingRequest(
-                                            mPreviewRequestBuilder.build(),
-                                            mPreviewCallback, mBackgroundHandler);
-                                } catch (CameraAccessException | IllegalStateException e) {
-                                    e.printStackTrace();
-                                    return;
-                                }
-                                // When the session is ready, we start displaying the preview.
-                                mCaptureSession = cameraCaptureSession;
-                            }
-                        }
-
-                        @Override
-                        public void onConfigureFailed(CameraCaptureSession cameraCaptureSession) {
-                            showToast("Failed to configure camera.");
-                        }
-                    }, mBackgroundHandler
+                            mRawImageReader.get().getSurface()), mPreviewOpenCallback, mBackgroundHandler
             );
             setSeekBarShutterSpeed();
             setSeekBarISO();
@@ -1103,19 +1082,23 @@ public class Camera2RawFragment extends Fragment
         Log.e("error", "captureStillPictureLocked");
         synchronized (mCameraStateLock) {
             try {
+                bayerPattern = bayerPatterns[mCharacteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)];
                 captureBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
                 captureBuilder.addTarget(mRawImageReader.get().getSurface());
                 captureBuilder.setTag(mRequestCounter.getAndIncrement());
                 captureBuilder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF);
                 captureBuilder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
                 captureBuilder.set(CaptureRequest.SENSOR_SENSITIVITY, mISO);
-                captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mShutterSpeed);//(long)(0.02 *1000000000));
+                captureBuilder.set(CaptureRequest.SENSOR_EXPOSURE_TIME, mShutterSpeed);
 
-                mCaptureRequest = captureBuilder.build();
+                CaptureRequest mCaptureRequest = captureBuilder.build();
 
                 ImageSaver.ImageSaverBuilder rawBuilder = new ImageSaver.ImageSaverBuilder(getActivity())
                         .setCharacteristics(mCharacteristics);
+
+
                 mRawResultQueue.put((int) mCaptureRequest.getTag(), rawBuilder);
+
                 mCaptureSession.capture(mCaptureRequest, mCaptureCallback, mBackgroundHandler);
 
             } catch (CameraAccessException e) {
@@ -1381,10 +1364,12 @@ public class Camera2RawFragment extends Fragment
 
         private final File mFileOri;
 
+        private  final String mBayerPattern;
+
         private ImageSaver(Image image, File file, File fileOri, CaptureResult result,
                            CameraCharacteristics characteristics, Context context,
                            RefCountedAutoCloseable<ImageReader> reader, Size largestSize,
-                            int mRatio, DenoisingModel denoisingModel) {
+                            int mRatio, DenoisingModel denoisingModel, String bayerPattern) {
             mImage = image;
             mFile = file;
             mFileOri = fileOri;
@@ -1396,6 +1381,7 @@ public class Camera2RawFragment extends Fragment
 
             mRate = mRatio;
             tfLiteModel = denoisingModel;
+            mBayerPattern = bayerPattern;
         }
         @Override
         public void run() {
@@ -1408,6 +1394,7 @@ public class Camera2RawFragment extends Fragment
                     FileOutputStream output = null;
                     FileOutputStream outputStream = null;
 
+                    tfLiteModel.setBayerPattern(mBayerPattern);
                     tfLiteModel.initBytesArray(mLargestSize);
                     tfLiteModel.initTensor(mImage, mRate);
 
@@ -1423,6 +1410,7 @@ public class Camera2RawFragment extends Fragment
                     } finally {
                         mImage.close();
                         closeOutput(outputStream);
+                        closeOutput(output);
                     }
                     break;
                 }
@@ -1467,9 +1455,10 @@ public class Camera2RawFragment extends Fragment
             private CameraCharacteristics mCharacteristics;
             private Context mContext;
             private RefCountedAutoCloseable<ImageReader> mReader;
-            private  Size mLargestSize;
+            private Size mLargestSize;
             private int mRate;
             private DenoisingModel tfLiteModel;
+            private String mBayerPattern;
             /**
              * Construct a new ImageSaverBuilder using the given {@link Context}.
              *
@@ -1536,13 +1525,18 @@ public class Camera2RawFragment extends Fragment
                 tfLiteModel = denoisingModel;
                 return this;
             }
-
+            public synchronized ImageSaverBuilder setBayerPattern(
+                    final String bayerPattern){
+                if (bayerPattern == null) throw  new NullPointerException();
+                mBayerPattern = bayerPattern;
+                return this;
+            }
             public synchronized ImageSaver buildIfComplete() {
                 if (!isComplete()) {
                     return null;
                 }
                 return new ImageSaver(mImage, mFile, mFileOri, mCaptureResult, mCharacteristics, mContext,
-                        mReader, mLargestSize, mRate, tfLiteModel);
+                        mReader, mLargestSize, mRate, tfLiteModel, mBayerPattern);
             }
 
             public synchronized String getSaveLocation() {
