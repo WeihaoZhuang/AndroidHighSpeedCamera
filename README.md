@@ -1,7 +1,7 @@
-# Android High Speed Smart Phone Camera (HSSP)
+# Android High Speed Camera (AHSC)
 ![DenoisngImage](images/denoising.jpg)
 ## Introduction
-HSSP is an implementation deployed on Android devices to perform denoising on photos taken at high shutter speeds. (This Android implementation is modified for https://github.com/googlearchive/android-Camera2Raw)
+AHSC is an implementation deployed on Android devices to perform denoising on photos taken at high shutter speeds. (This Android implementation is modified for https://github.com/googlearchive/android-Camera2Raw)
 
 Current image denoising applications generally perform denoising for pictures taken in low light environments or pictures taken using high ISO. For general shooting scenarios, lowering the ISO and extending the exposure can result in clearer images. However, for some scenarios where a high-speed shutter is required, such as the above image of water flow, underexposed images are also obtained.
 
