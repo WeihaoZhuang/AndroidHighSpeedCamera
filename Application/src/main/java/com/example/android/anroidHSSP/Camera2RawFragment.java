@@ -607,7 +607,7 @@ public class Camera2RawFragment extends Fragment
 
         try {
             denoising = new DenoisingModel(getContext());
-            denoising.loadModelFile("model_allPhones.tflite", 4);//loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
+            denoising.loadModelFile("model_float32.tflite", 4);//loadModelFile();//= new Interpreter(tfliteModel, tfLiteOptions);
         } catch (IOException e) {
             e.printStackTrace();
         }
